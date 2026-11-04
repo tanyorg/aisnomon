@@ -16,6 +16,21 @@ extern "C" {
     fn gethostname(name: *mut std::ffi::c_char, len: usize) -> i32;
 }
 
+/// Longest accepted --label.
+pub const LABEL_MAX: usize = 32;
+
+/// `--label NAME`: printable ASCII (the canvas shows nothing else
+/// faithfully), at most `LABEL_MAX` characters. Empty hides the name.
+pub fn parse_label(v: &str) -> Result<String, String> {
+    if v.chars().count() > LABEL_MAX {
+        return Err(format!("--label is longer than {LABEL_MAX} characters"));
+    }
+    if !v.chars().all(|c| c.is_ascii_graphic() || c == ' ') {
+        return Err(format!("--label must be printable ASCII: {v:?}"));
+    }
+    Ok(v.to_string())
+}
+
 /// Short host name, so a screen shared over SSH says where it runs.
 pub fn hostname() -> String {
     let mut buf = [0u8; 256];
@@ -207,7 +222,7 @@ pub fn page_rows(app: &App, h: usize) -> usize {
 }
 
 fn header(c: &mut Canvas, app: &App, wall: SystemTime) {
-    let host = hostname();
+    let host = &app.host;
     let mut x = c.put(
         0,
         0,
@@ -939,6 +954,27 @@ mod tests {
             s.contains(" 22-40 of 40 ") && s.contains("244000000"),
             "{s}"
         );
+    }
+
+    #[test]
+    fn header_label() {
+        let t = Instant::now();
+        let mut a = App::new("tcp://rx:10110".into(), false, DEFAULT_WINDOW, t);
+        a.host = parse_label("myhost").unwrap();
+        let s = render(&a, t, SystemTime::now(), 80, 24).text();
+        assert!(
+            s.starts_with("aisnomon 0.1.0  myhost  tcp://rx:10110"),
+            "{s}"
+        );
+        a.host = parse_label("").unwrap();
+        let s = render(&a, t, SystemTime::now(), 80, 24).text();
+        assert!(s.starts_with("aisnomon 0.1.0  tcp://rx:10110"), "{s}");
+        assert_eq!(parse_label("tokyo bay rx-1").unwrap(), "tokyo bay rx-1");
+        assert!(parse_label(&"x".repeat(LABEL_MAX)).is_ok());
+        assert!(parse_label(&"x".repeat(LABEL_MAX + 1)).is_err());
+        assert!(parse_label("caf\u{e9}").is_err());
+        assert!(parse_label("a\tb").is_err());
+        assert!(parse_label("a\x1b[2Jb").is_err());
     }
 
     #[test]

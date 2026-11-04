@@ -95,7 +95,10 @@ nc 192.0.2.10 10110 | aisnomon --snapshot 60 -f -   # one screen, no TUI
 scripts or sharing; `--view 1-4` picks which screen and `--size WxH` the
 canvas. `-w SECS` sets the "recently heard" MMSI window (default 600) and
 `-a` draws boxes in ASCII for terminals where box-drawing characters have an
-ambiguous width. `aisnomon -h` lists every option.
+ambiguous width. `--label NAME` replaces the host name in the header, to
+tell receiver sites apart when screens are shared or to keep the host name
+out of a screenshot; `--label ''` hides it. `aisnomon -h` lists every
+option.
 
 **Dual stack:** whether a socket bound to `[::]` also receives IPv4 depends
 on the OS default: Linux accepts IPv4-mapped traffic

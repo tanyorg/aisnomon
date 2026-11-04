@@ -331,6 +331,8 @@ pub struct App {
     pub connected: bool,
     pub reconnects: u64,
     pub ascii: bool,
+    /// Name shown in the header: the host name or --label; empty hides it.
+    pub host: String,
     /// Statistics as they are now; always updated.
     pub live: Stats,
     /// Set while paused: what the screens show instead of `live`.
@@ -356,6 +358,7 @@ impl App {
             connected: false,
             reconnects: 0,
             ascii,
+            host: String::new(),
             live: Stats::new(window, now),
             frozen: None,
             scroll: 0,

@@ -26,6 +26,8 @@ options:
   -w, --window SECS      'recently heard' window for the MMSI count
                          (default 600, 10 to 86400)
   -a, --ascii            ASCII box drawing (for ambiguous-width terminals)
+      --label NAME       name shown in the header instead of the host name
+                         (printable ASCII, at most 32 characters; '' hides it)
       --snapshot SECS    no TUI: run SECS seconds, print one screen, exit
                          (0 < SECS <= 86400)
       --size WxH         canvas size for --snapshot (default 100x40,
@@ -45,6 +47,7 @@ struct Opts {
     replay: Option<String>,
     window: Duration,
     ascii: bool,
+    label: Option<String>,
     snapshot: Option<Duration>,
     size: (usize, usize),
     view: u8,
@@ -58,6 +61,7 @@ fn parse_args() -> Result<Opts, String> {
         replay: None,
         window: app::DEFAULT_WINDOW,
         ascii: false,
+        label: None,
         snapshot: None,
         size: (100, 40),
         view: b'1',
@@ -75,6 +79,7 @@ fn parse_args() -> Result<Opts, String> {
                 std::process::exit(0);
             }
             "-a" | "--ascii" => o.ascii = true,
+            "--label" => o.label = Some(ui::parse_label(&val("--label")?)?),
             "-s" | "--speed" => {
                 let v = val("--speed")?;
                 let b: u32 = v.parse().map_err(|_| format!("bad speed: {v}"))?;
@@ -165,6 +170,7 @@ fn run(o: Opts) -> Result<(), String> {
     };
 
     let mut app = app::App::new(label, o.ascii, o.window, Instant::now());
+    app.host = o.label.unwrap_or_else(ui::hostname);
 
     if let Some(d) = o.snapshot {
         term::drain_for(&rx, d, |ev| {
