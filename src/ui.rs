@@ -39,6 +39,12 @@ fn tail(s: &str, n: usize) -> String {
     format!("...{}", s.chars().skip(len - keep).collect::<String>())
 }
 
+/// Put at most `w` characters, so text never overwrites a box border.
+fn put_clip(c: &mut Canvas, x: usize, y: usize, s: &str, style: u8, w: usize) {
+    let t: String = s.chars().take(w).collect();
+    c.put(x, y, &t, style);
+}
+
 fn pct(n: u64, d: u64) -> String {
     if d == 0 {
         "-".into()
@@ -489,11 +495,15 @@ fn types_view(c: &mut Canvas, app: &App, now: Instant, y: usize, w: usize, h: us
 
     let rw = w - lw;
     c.boxed(lw, y, rw, h, "MESSAGE TYPES");
-    c.put(
+    // Inner width at 80 columns is 36: 3+1+10+8+7+1+6.
+    let iw = rw.saturating_sub(4);
+    put_clip(
+        c,
         lw + 2,
         y + 1,
-        "Type  Name           Msgs       %  Last",
+        "Typ Name          Msgs      %   Last",
         st::DIM,
+        iw,
     );
     let mut yy = y + 2;
     for t in 1..=27u8 {
@@ -507,16 +517,12 @@ fn types_view(c: &mut Canvas, app: &App, now: Instant, y: usize, w: usize, h: us
         let last = k.type_last[t as usize]
             .map(|l| fmt_dur(now.saturating_duration_since(l)))
             .unwrap_or_default();
-        c.put(
-            lw + 2,
-            yy,
-            &format!(
-                "{t:>4}  {:<10} {n:>9} {:>7}  {last}",
-                ais::type_name(t),
-                pct(n, k.messages)
-            ),
-            0,
+        let line = format!(
+            "{t:>3} {:<10}{n:>8}{:>7} {last:>6}",
+            ais::type_name(t),
+            pct(n, k.messages)
         );
+        put_clip(c, lw + 2, yy, &line, 0, iw);
         yy += 1;
     }
 }
@@ -676,6 +682,35 @@ mod tests {
             assert_eq!(b[2 + cw - 1], ' ', "{row}");
         }
         assert!(s.contains("AIS A    9999999 100.0%"), "{s}");
+    }
+
+    /// Every box keeps its right border intact at the minimum width, with
+    /// the widest values each view can show.
+    #[test]
+    fn borders_survive_wide_values() {
+        let t = Instant::now();
+        let mut a = sample_app(t);
+        for ty in 1..=27 {
+            a.c.types[ty] = 99_999_999;
+            a.c.type_last[ty] = Some(t);
+        }
+        a.c.messages = 99_999_999;
+        a.c.chan = [99_999_999; 3];
+        let now = t + Duration::from_secs(86_400 * 30);
+        for view in [View::Main, View::Types, View::Mmsi, View::Raw] {
+            a.view = view;
+            let s = render(&a, now, SystemTime::now(), 80, 40).text();
+            for (i, row) in s.lines().enumerate().skip(1).take(38) {
+                let last = row.chars().nth(79);
+                assert!(
+                    matches!(last, Some('\u{2502}' | '\u{2510}' | '\u{2518}')),
+                    "{view:?} row {i}: {row}"
+                );
+            }
+        }
+        a.view = View::Types;
+        let s = render(&a, now, SystemTime::now(), 80, 40).text();
+        assert!(s.contains("  5 Static A  99999999 100.0% 30d00h"), "{s}");
     }
 
     #[test]
