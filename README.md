@@ -25,42 +25,7 @@ monitor), both in the [gnomon](https://github.com/tanyorg/gnomon)
 repository, and built on the same terminal and serial code. No external crates (std only). Read-only: it never
 writes to a receiver.
 
-```
-aisnomon 0.1.0  ais-receiver1  tcp://127.0.0.1:10120  connected 127.0.0.1:10120 2026-11-04 06:15:02Z
-┌ SUMMARY ─────────────────────────────────────────────────────────────────────────────────────────┐
-│ Messages   965                  AIS A    482     49.9%          Valid      970     99.7%         │
-│ Rate 10s   21.4/s               AIS B    483     50.1%          CK error   3       0.3%          │
-│ Rate 1m    21.4/s               No chan  0       0.0%           Not NMEA   0                     │
-│ Last msg   0s ago               MMSI 10m 33                     Incomplete 0                     │
-│ Uptime     45s                  MMSI all 33                     Decode err 0                     │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ RECEPTION TIMELINE  msg/s, 1s/column  [t] ───────────────────────────────────────────────────────┐
-│ 28.0/s                                              ▄  ▆ ▂           ▂ ▂ ▂       ▄  █       ▂ ▂  │
-│                                                     █▄ █ █▂▆ ▆ ▄█▄ █ █ █ █ ▆ ▄▂▄ █  █ ▆ ▆  ▄█ █▂ │
-│                                                    ▂██▆█▂███▄█▆███▄█▆█▄█▆███▂███▄██▂█▆█▆█▆███▂██ │
-│                                                    █████████████████████████████████████████████ │
-│                                                    █████████████████████████████████████████████ │
-│                                                    █████████████████████████████████████████████ │
-│      0                                             █████████████████████████████████████████████ │
-│            -1m20s    -1m10s       -1m      -50s      -40s      -30s      -20s      -10s      now │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ NMEA RECEIVED  [p] pause ────────────────────────────────────────────────────────────────────────┐
-│ 06:15:01.680 A     T1 244073634         !AIVDM,1,1,,A,13`i4`bjVNfRNgH@`jvv1vbeCTI8,0*50          │
-│ 06:15:01.696 B     T1 257070072         !AIVDM,1,1,,B,13m:Cv?T5TuwvuHP>dENDPU0nRqH,0*73          │
-│ 06:15:01.784 A     T1 431199947         !AIVDM,1,1,,A,16K>Fjm9CpLviqi=FAOT;kGqBT1m,0*59          │
-│ 06:15:01.793 B     T18 211922290        !AIVDM,1,1,,B,B3:6eLbQ;L;LU<nkLdSAbPahNtW6,0*74          │
-│ 06:15:01.811 A     T1 257441194         !AIVDM,1,1,,A,13mPubUgPKcgl7Tq?dnvATUO<tew,0*4B          │
-│ 06:15:01.899 B     T1 563318919         !AIVDM,1,1,,B,18I>@QjT0Quda:4bTuA15j@Li9qk,0*41          │
-│ 06:15:01.966 A     T1 244624360         !AIVDM,1,1,,A,13aBcr4WAUJ`qjsUl2l<2R?8FSgB,0*2F          │
-│ 06:15:02.016 B     T3 265307689         !AIVDM,1,1,,B,33u16:C:t>WNQC<H7kwIqiNAIJwi,0*49          │
-│ 06:15:02.050 A     T1 245479545         !AIVDM,1,1,,A,13b6pNHcUri`6vMsvng<wvkgdcvp,0*7A          │
-│ 06:15:02.063 B     T3 245468286         !AIVDM,1,1,,B,33b6<OSD2qk:mW=fU43o;>`FiAV;,0*3D          │
-│ 06:15:02.075 A     T1 235389759         !AIVDM,1,1,,A,13PO3?rb1rQrDKm<g1M1U8gVDQsI,0*40          │
-│ 06:15:02.098 B     T3 265619665         !AIVDM,1,1,,B,33uD8lOeGHEWiibpLo1?1NIgps8O,0*6D          │
-│ 06:15:02.115 A     T1 211857527         !AIVDM,1,1,,A,13:2hMuVvj7qLcJ`aul9A?s23r`7,0*1D          │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-1 main 2 types 3 MMSI 4 raw  p pause  j/k scroll  t scale  c clear  q quit
-```
+![aisnomon main view on macOS, reading simulated AIS traffic from a pty at 38400 bps: summary counters, a per-second reception timeline and received NMEA sentences with type and MMSI](aisnomon.png)
 
 ## Install
 
@@ -73,9 +38,10 @@ cargo install --path .
 ```
 
 Requires Rust 1.80 or later (built and tested with 1.80.1 and 1.99.1).
-Tested on Linux. The termios, `TIOCGWINSZ` and `fcntl` constants also cover
-macOS, FreeBSD, NetBSD, OpenBSD and DragonFly, but those platforms have not
-been tested yet.
+Tested on Linux and macOS (unit tests, and serial input through a pty; the
+screenshots are from macOS). The termios, `TIOCGWINSZ` and `fcntl`
+constants also cover FreeBSD, NetBSD, OpenBSD and DragonFly, but those
+platforms have not been tested yet.
 
 ## Usage
 
@@ -141,13 +107,19 @@ length errors (`Len!`) and time since last heard. On wide terminals
 `LastLen` shows the bit length of the latest out-of-range message with the
 accepted range, e.g. `158b (160-168)`.
 
+![aisnomon view 2: per-channel message counts and 10 minute rates, integrity counters, and messages per AIS message type](aisnomon-types.png)
+
 **View 3: MMSI** — every MMSI heard: station kind from the MMSI digits
 (ship, coast, AtoN, SAR air, ...), messages in total and per channel, mean
 interval, time since last heard and the message types seen. Sorted by last
 heard or by count (`s`), scrollable, with the row position shown at the
 bottom right. MMSIs outside the window are dimmed.
 
+![aisnomon view 3: MMSI table with station kind, message counts per channel, mean interval, time since last heard and message types](aisnomon-mmsi.png)
+
 **View 4: raw** — the NMEA log at full height.
+
+![aisnomon view 4: received NMEA sentences at full height with receive time, channel, message type and MMSI](aisnomon-raw.png)
 
 See [docs/aisnomon.md](docs/aisnomon.md) for every counter's definition.
 
