@@ -201,6 +201,15 @@ pub fn datagram_lines(mut data: &[u8]) -> Vec<String> {
         .collect()
 }
 
+/// Status once bound: "joined" for a multicast group, else "listening".
+fn udp_status(addr: IpAddr, label: &str) -> String {
+    if addr.is_multicast() {
+        format!("joined {label}")
+    } else {
+        format!("listening {label}")
+    }
+}
+
 fn udp_bind(addr: IpAddr, port: u16) -> std::io::Result<UdpSocket> {
     let s = match addr {
         IpAddr::V4(a) if a.is_multicast() => {
@@ -238,7 +247,7 @@ fn udp_session(
     let label = crate::target::Target::Udp { addr, port }.display();
     let sock =
         udp_bind(addr, port).map_err(|e| std::io::Error::new(e.kind(), format!("{label}: {e}")))?;
-    let _ = tx.send(Ev::Connected(format!("listening {label}"), Kind::Udp));
+    let _ = tx.send(Ev::Connected(udp_status(addr, &label), Kind::Udp));
     let mut peers: HashSet<SocketAddr> = HashSet::new();
     let mut buf = vec![0u8; 65536];
     loop {
@@ -355,6 +364,16 @@ mod tests {
         );
         assert!(datagram_lines(b"").is_empty());
         assert!(datagram_lines(b"\r\n").is_empty());
+    }
+
+    #[test]
+    fn udp_status_joined_or_listening() {
+        let v4: IpAddr = "239.192.0.2".parse().unwrap();
+        let v6: IpAddr = "ff15::a15:2".parse().unwrap();
+        let uni: IpAddr = "0.0.0.0".parse().unwrap();
+        assert_eq!(udp_status(v4, "udp://x"), "joined udp://x");
+        assert_eq!(udp_status(v6, "udp://x"), "joined udp://x");
+        assert_eq!(udp_status(uni, "udp://x"), "listening udp://x");
     }
 
     #[test]

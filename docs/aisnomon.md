@@ -95,5 +95,5 @@ Counts that do not fit their column are abbreviated with decimal prefixes
 |---|---|
 | Serial | 8N1, raw, CLOCAL, exclusive (TIOCEXCL). Without `-s`, 38400 (IEC 61162-2) is probed first, then 4800, 9600, 115200, 19200, 57600, 230400; one checksum-valid sentence within 5 s selects a speed. If none does, the port is used at 38400 so line noise stays visible. A quiet port is never reopened. |
 | TCP | Client; read-only. Reconnects with 1-8 s back-off; a connection silent for 300 s is reopened (half-open detection). |
-| UDP | Bound to the given address; a multicast address is joined on the default interface. Each datagram is self-contained; an IEC 61162-450 `UdPbC\0` header is removed. |
+| UDP | Bound to the given address; a multicast address is joined on the default interface (experimental, see the README). Each datagram is self-contained; an IEC 61162-450 `UdPbC\0` header is removed. |
 | Replay | `-f FILE` is paced by tag block `c:` times (gaps capped at 5 s); lines without one are delivered immediately. `-f -` reads stdin unpaced. |

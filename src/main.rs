@@ -16,6 +16,7 @@ target:
   host:port              raw NMEA over TCP (never writes to the peer)
   tcp://host:port        same, explicit; [ipv6]:port for IPv6 literals
   udp://[addr]:port      listen for UDP; a multicast group is joined
+                         (multicast is experimental)
   udp://:port            listen on 0.0.0.0
 
 options:

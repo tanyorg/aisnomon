@@ -51,7 +51,7 @@ aisnomon -s 38400 /dev/cuaU0          # serial at a fixed speed
 aisnomon 192.0.2.10:10110             # raw NMEA over TCP (client)
 aisnomon udp://:10110                 # listen for UDP on 0.0.0.0:10110
 aisnomon udp://[::]:10110             # listen on IPv6 (see the dual-stack note)
-aisnomon udp://239.192.0.2:60002      # join an IPv4 multicast group
+aisnomon udp://239.192.0.2:60002      # join an IPv4 multicast group (experimental)
 aisnomon -l ais.log 192.0.2.10:10110  # also append every line to ais.log
 aisnomon -f ais.log                   # replay a capture
 nc 192.0.2.10 10110 | aisnomon --snapshot 60 -f -   # one screen, no TUI
@@ -71,13 +71,15 @@ on the OS default: Linux accepts IPv4-mapped traffic
 (`net.ipv6.bindv6only=0`), FreeBSD does not (`net.inet6.ip6.v6only=1`) and
 OpenBSD never does. Listen on `udp://:PORT` (0.0.0.0) for IPv4 senders.
 
-**Multicast:** a multicast address (IPv4 or IPv6, e.g.
+**Multicast (experimental):** multicast reception is an experimental
+feature. A multicast address (IPv4 or IPv6, e.g.
 `udp://[ff15::a15:2]:60003`) is joined on the interface the kernel picks
-for it, normally the one with the default route; an IEC 61162-450
-`UdPbC\0` header is removed. Tested so far with `tools/mockais.py` only:
-IPv4 and IPv6 groups with sender and receiver on one Linux host, IPv4
-`--udpbc` datagrams on one host, and IPv4 from a macOS sender to an Ubuntu
-receiver across a LAN. Not yet tested with IEC 61162-450 equipment.
+for it, normally the one with the default route, and an IEC 61162-450
+`UdPbC\0` header is removed. So far it has been tried only with a simulated
+sender: IPv4 and IPv6 groups on one Linux host, IEC 61162-450 style
+datagrams on one host, and IPv4 from a macOS sender to an Ubuntu receiver
+across a LAN. It did not work on OpenBSD (not yet investigated), and it
+has not been tested with IEC 61162-450 equipment.
 
 ### Keys
 
@@ -149,9 +151,13 @@ tools/mockais.py tcp 10110 &                    # then: aisnomon localhost:10110
 tools/mockais.py --speedup 10 --ck-errors 0.02 --drop-frag 0.1 udp 127.0.0.1:10110
 tools/mockais.py --fade 120 pty                 # prints a pty path for aisnomon
 tools/mockais.py --tag --duration 600 stdout > capture.nmea
-tools/mockais.py --udpbc udp 239.192.0.2:60002  # IEC 61162-450 style multicast
-tools/mockais.py udp '[ff15::a15:2]:60003'      # IPv6 multicast
+tools/mockais.py --udpbc udp 127.0.0.1:10110    # IEC 61162-450 style datagrams
+tools/mockais.py udp '[::1]:10110'              # IPv6
 ```
+
+`mockais.py` only sends unicast UDP and refuses multicast destinations, so
+a forgotten simulator cannot feed fake AIS traffic to every listener of a
+group on the network.
 
 ## Limitations
 

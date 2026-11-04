@@ -5,6 +5,7 @@
 //!   tcp://host:port        same, explicit
 //!   [v6addr]:port          IPv6 literal
 //!   udp://[addr]:port      listen for UDP datagrams; a multicast address
+//!                          (experimental)
 //!                          is joined (IEC 61162-450 style)
 //!   udp://:port, udp://port  listen on 0.0.0.0
 
