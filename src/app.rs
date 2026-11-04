@@ -227,6 +227,11 @@ pub struct Counters {
     /// Messages per type (index = type, 1..=27).
     pub types: [u64; 28],
     pub type_last: [Option<Instant>; 28],
+    /// Received (VDM) messages per type whose length was out of range.
+    pub type_len_short: [u64; 28],
+    pub type_len_long: [u64; 28],
+    /// Length in bits of the latest out-of-range message per type.
+    pub type_len_bits: [Option<usize>; 28],
 }
 
 // ---------------------------------------------------------------- app ---
@@ -577,6 +582,15 @@ impl App {
         self.c.chan[v.chan.index()] += 1;
         self.c.types[h.mtype as usize] += 1;
         self.c.type_last[h.mtype as usize] = Some(now);
+        let ti = h.mtype as usize;
+        match h.len {
+            LenCheck::Ok => {}
+            LenCheck::Short => self.c.type_len_short[ti] += 1,
+            LenCheck::Long => self.c.type_len_long[ti] += 1,
+        }
+        if h.len != LenCheck::Ok {
+            self.c.type_len_bits[ti] = Some(h.bits);
+        }
         self.last_msg = Some(now);
         self.timeline.add(now, v.chan);
         self.note_mmsi(h.mmsi, h.mtype, v.chan, now);
@@ -649,9 +663,31 @@ mod tests {
         );
         assert_eq!(a.raw[5].frag, "1/2");
         assert_eq!(a.raw[0].chan, 'B');
+        assert_eq!(a.c.type_len_short, [0; 28]);
         // MMSIs keep their leading zeros: 00MIDxxxx is a coast station
         a.line(ts, "!AIVDM,1,1,,B,D0476ch0@Bfp?`B`?`0,4*5D".into(), t);
         assert_eq!(a.raw.back().unwrap().note, "T20 004310703");
+    }
+
+    #[test]
+    fn length_errors_per_type() {
+        let (mut a, t) = app();
+        let ts = SystemTime::now();
+        // type 1 cut to 162 bits (27 chars), type 1 at 174 bits, VDO short
+        for l in [
+            "!AIVDM,1,1,,A,177KQJ5000G?tO`K>RA1wUbN0TK,0*XX",
+            "!AIVDM,1,1,,A,177KQJ5000G?tO`K>RA1wUbN0TKH0,0*XX",
+            "!AIVDO,1,1,,,177KQJ5000G?tO`K>RA1wUbN0TK,0*XX",
+        ] {
+            let body = &l[1..l.find('*').unwrap()];
+            let ck = body.bytes().fold(0u8, |a, b| a ^ b);
+            a.line(ts, format!("!{body}*{ck:02X}"), t);
+        }
+        assert_eq!((a.c.len_short, a.c.len_long), (2, 1));
+        // VDO is not a received message: per-type counts exclude it
+        assert_eq!((a.c.type_len_short[1], a.c.type_len_long[1]), (1, 1));
+        assert_eq!(a.c.type_len_bits[1], Some(174));
+        assert!(a.raw[0].note.ends_with("short 162b"), "{}", a.raw[0].note);
     }
 
     #[test]
