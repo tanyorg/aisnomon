@@ -63,6 +63,18 @@ Per ITU-R M.1371-5, with commonly seen deviations tolerated:
 |  |  | 17 | 80-816 | 26 | 60-1064 |
 |  |  | 18 | 168 | 27 | 96-168 |
 
+## Message types table (view 2)
+
+| Column | Meaning |
+|---|---|
+| Msgs, % | received (VDM) messages of the type and their share of all messages |
+| Len! | messages of the type whose length was outside the accepted range (short + long; VDO excluded) |
+| Last | time since the type was last received |
+| LastLen | bit length of the latest out-of-range message, with the accepted range in parentheses (only when the box is at least 48 columns wide) |
+
+Counts that do not fit their column are abbreviated with decimal prefixes
+(12.3M).
+
 ## Rates and windows
 
 - **Rate 10s / Rate 1m**: complete messages over the last 10 or 60 complete

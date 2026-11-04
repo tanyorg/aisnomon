@@ -39,6 +39,52 @@ fn tail(s: &str, n: usize) -> String {
     format!("...{}", s.chars().skip(len - keep).collect::<String>())
 }
 
+/// `n` in at most `w` (>= 4) characters: plain digits when they fit,
+/// else scaled with decimal k/M/G/T/P/E, e.g. 12.3M.
+pub fn fmt_count(n: u64, w: usize) -> String {
+    let plain = n.to_string();
+    if plain.len() <= w {
+        return plain;
+    }
+    let units = [
+        (1e3, 'k'),
+        (1e6, 'M'),
+        (1e9, 'G'),
+        (1e12, 'T'),
+        (1e15, 'P'),
+        (1e18, 'E'),
+    ];
+    for (div, unit) in units {
+        let v = n as f64 / div;
+        // Use the first unit that keeps the value below 1000 once rounded.
+        if v >= 999.95 {
+            continue;
+        }
+        let s = format!("{v:.1}{unit}");
+        if s.len() <= w {
+            return s;
+        }
+        if v < 999.5 {
+            let s = format!("{v:.0}{unit}");
+            if s.len() <= w {
+                return s;
+            }
+        }
+    }
+    plain
+}
+
+/// Age with one unit, for narrow columns: 13s, 5m, 2h, 30d.
+fn fmt_ago(d: Duration) -> String {
+    let s = d.as_secs();
+    match s {
+        0..=59 => format!("{s}s"),
+        60..=3599 => format!("{}m", s / 60),
+        3600..=86399 => format!("{}h", s / 3600),
+        _ => format!("{}d", (s / 86400).min(999)),
+    }
+}
+
 /// Put at most `w` characters, so text never overwrites a box border.
 fn put_clip(c: &mut Canvas, x: usize, y: usize, s: &str, style: u8, w: usize) {
     let t: String = s.chars().take(w).collect();
@@ -238,7 +284,7 @@ fn summary(c: &mut Canvas, app: &App, now: Instant, y: usize, w: usize) {
     );
 
     let total = k.messages;
-    let chan = |n: u64| format!("{n:<7} {}", pct(n, total));
+    let chan = |n: u64| format!("{:<7} {}", fmt_count(n, 7), pct(n, total));
     field(c, x2, y, "AIS A", &chan(k.chan[0]), 0);
     field(c, x2, y + 1, "AIS B", &chan(k.chan[1]), 0);
     field(
@@ -271,7 +317,7 @@ fn summary(c: &mut Canvas, app: &App, now: Instant, y: usize, w: usize) {
         x3,
         y,
         "Valid",
-        &format!("{:<7} {}", k.valid, pct(k.valid, snt)),
+        &format!("{:<7} {}", fmt_count(k.valid, 7), pct(k.valid, snt)),
         0,
     );
     field(
@@ -281,7 +327,7 @@ fn summary(c: &mut Canvas, app: &App, now: Instant, y: usize, w: usize) {
         "CK error",
         &format!(
             "{:<7} {}",
-            k.ck_bad + k.ck_missing,
+            fmt_count(k.ck_bad + k.ck_missing, 7),
             pct(k.ck_bad + k.ck_missing, snt)
         ),
         bad(k.ck_bad + k.ck_missing, st::RED),
@@ -453,7 +499,7 @@ fn types_view(c: &mut Canvas, app: &App, now: Instant, y: usize, w: usize, h: us
             yy,
             &format!(
                 "{name:<4} {:>8} {:>6} {:>10}",
-                k.chan[i],
+                fmt_count(k.chan[i], 8),
                 pct(k.chan[i], k.messages),
                 rate
             ),
@@ -489,22 +535,33 @@ fn types_view(c: &mut Canvas, app: &App, now: Instant, y: usize, w: usize, h: us
             break;
         }
         c.put(2, yy, label, st::DIM);
-        c.put(22, yy, &format!("{v:>10}"), if v > 0 { s } else { 0 });
+        c.put(
+            22,
+            yy,
+            &format!("{:>10}", fmt_count(v, 10)),
+            if v > 0 { s } else { 0 },
+        );
         yy += 1;
     }
 
     let rw = w - lw;
     c.boxed(lw, y, rw, h, "MESSAGE TYPES");
-    // Inner width at 80 columns is 36: 3+1+10+8+7+1+6.
+    // Inner width at 80 columns is 36: 2+1+9+7+1+6+5+1+4. Wider
+    // terminals also get the length of the latest out-of-range message.
     let iw = rw.saturating_sub(4);
-    put_clip(
-        c,
-        lw + 2,
-        y + 1,
-        "Typ Name          Msgs      %   Last",
-        st::DIM,
-        iw,
+    let wide = iw >= 44;
+    let x = lw + 2;
+    let head = format!(
+        "{:>2} {:<9}{:>7} {:>6}{:>5} {:>4}{}",
+        "Ty",
+        "Name",
+        "Msgs",
+        "%",
+        "Len!",
+        "Last",
+        if wide { " LastLen" } else { "" }
     );
+    put_clip(c, x, y + 1, &head, st::DIM, iw);
     let mut yy = y + 2;
     for t in 1..=27u8 {
         let n = k.types[t as usize];
@@ -514,15 +571,46 @@ fn types_view(c: &mut Canvas, app: &App, now: Instant, y: usize, w: usize, h: us
         if yy >= y + h - 1 {
             break;
         }
-        let last = k.type_last[t as usize]
-            .map(|l| fmt_dur(now.saturating_duration_since(l)))
+        let ti = t as usize;
+        let last = k.type_last[ti]
+            .map(|l| fmt_ago(now.saturating_duration_since(l)))
             .unwrap_or_default();
-        let line = format!(
-            "{t:>3} {:<10}{n:>8}{:>7} {last:>6}",
+        let left = format!(
+            "{t:>2} {:<9}{:>7} {:>6}",
             ais::type_name(t),
+            fmt_count(n, 7),
             pct(n, k.messages)
         );
-        put_clip(c, lw + 2, yy, &line, 0, iw);
+        put_clip(c, x, yy, &left, 0, iw);
+        let bad = k.type_len_short[ti] + k.type_len_long[ti];
+        let len = if bad > 0 {
+            fmt_count(bad, 4)
+        } else {
+            String::new()
+        };
+        put_clip(c, x + 26, yy, &format!("{len:>5}"), st::YELLOW, iw - 26);
+        put_clip(c, x + 31, yy, &format!(" {last:>4}"), 0, iw - 31);
+        if wide {
+            if let Some(b) = k.type_len_bits[ti] {
+                let (lo, hi) = ais::len_range(t);
+                let range = if lo == hi {
+                    format!("{lo}")
+                } else {
+                    format!("{lo}-{hi}")
+                };
+                let note = format!(" {b:>6}b");
+                put_clip(c, x + 36, yy, &note, st::YELLOW, iw - 36);
+                // expected range, when there is room for it
+                put_clip(
+                    c,
+                    x + 44,
+                    yy,
+                    &format!(" ({range})"),
+                    st::DIM,
+                    iw.saturating_sub(44),
+                );
+            }
+        }
         yy += 1;
     }
 }
@@ -710,7 +798,32 @@ mod tests {
         }
         a.view = View::Types;
         let s = render(&a, now, SystemTime::now(), 80, 40).text();
-        assert!(s.contains("  5 Static A  99999999 100.0% 30d00h"), "{s}");
+        assert!(s.contains(" 5 Static A  100.0M 100.0%       30d"), "{s}");
+        // length errors per type, and the bit length on a wide screen
+        a.c.type_len_short[5] = 3;
+        a.c.type_len_bits[5] = Some(418);
+        let s = render(&a, now, SystemTime::now(), 80, 40).text();
+        assert!(s.contains("100.0%    3  30d \u{2502}"), "{s}");
+        let s = render(&a, now, SystemTime::now(), 120, 40).text();
+        assert!(s.contains("Len! Last LastLen"), "{s}");
+        assert!(s.contains("    3  30d    418b (420-424)"), "{s}");
+    }
+
+    #[test]
+    fn counts_fit_their_columns() {
+        assert_eq!(fmt_count(9_999_999, 7), "9999999");
+        assert_eq!(fmt_count(12_345_678, 7), "12.3M");
+        assert_eq!(fmt_count(99_999_999, 7), "100.0M");
+        assert_eq!(fmt_count(999_960_000, 7), "1.0G");
+        assert_eq!(fmt_count(12_345, 4), "12k");
+        assert_eq!(fmt_count(99_999, 4), "100k");
+        assert_eq!(fmt_count(999_999, 4), "1.0M");
+        assert_eq!(fmt_count(u64::MAX, 7), "18.4E");
+        for n in [0, 9, 10_000, 999_500, 123_456_789, 10u64.pow(18), u64::MAX] {
+            for w in 4..=10 {
+                assert!(fmt_count(n, w).len() <= w, "{n} {w} {}", fmt_count(n, w));
+            }
+        }
     }
 
     #[test]
