@@ -29,6 +29,16 @@ pub fn hostname() -> String {
     h.split('.').next().unwrap_or("").to_string()
 }
 
+/// The first `n` characters of `s`, ending in "..." when cut.
+fn head(s: &str, n: usize) -> String {
+    if s.chars().count() <= n {
+        return s.to_string();
+    }
+    let mut t: String = s.chars().take(n.saturating_sub(3)).collect();
+    t.push_str(&"..."[..n.min(3)]);
+    t
+}
+
 /// The last `n` characters of `s`, with a leading "..." when cut.
 fn tail(s: &str, n: usize) -> String {
     let len = s.chars().count();
@@ -209,8 +219,9 @@ fn header(c: &mut Canvas, app: &App, wall: SystemTime) {
     }
     x = c.put(x, 0, &format!("  {}", tail(&app.target, c.w / 3)), 0);
     let clock = fmt_utc(wall);
-    let room = c.w.saturating_sub(x + clock.len() + 4);
-    let status: String = app.status.chars().take(room).collect();
+    // two spaces before the status, at least one before the clock
+    let room = c.w.saturating_sub(x + 2 + clock.len() + 1);
+    let status = head(&app.status, room);
     let style = if app.connected { st::GREEN } else { st::YELLOW };
     c.put(x + 2, 0, &status, style);
     c.put(c.w - clock.len(), 0, &clock, 0);
@@ -937,6 +948,15 @@ mod tests {
         assert_eq!(fmt_age(86400 + 1800), "1d30m");
         assert_eq!(fmt_age(0), "0s");
         assert_eq!(tail("abcdef", 6), "abcdef");
+        assert_eq!(
+            head("connected 127.0.0.1:10110", 25),
+            "connected 127.0.0.1:10110"
+        );
+        assert_eq!(head("connected 127.0.0.1:10110", 14), "connected 1...");
+        assert_eq!(
+            (head("abcdef", 2), head("abcdef", 0)),
+            ("..".into(), String::new())
+        );
         assert_eq!(tail("replay:/very/long/path.nmea", 12), "...path.nmea");
         assert_eq!(tick_interval(1, 10), 10);
         assert_eq!(tick_interval(10, 10), 120);
