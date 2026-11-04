@@ -5,5 +5,6 @@
 //! from gnomon (https://github.com/tanyorg/gnomon).
 
 
+pub mod nmea;
 pub mod term;
 pub mod tty;
