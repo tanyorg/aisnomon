@@ -34,7 +34,8 @@ options:
   -h, --help             this help
   -V, --version          version
 
-keys: q quit, 1-4 views, p pause, j/k or arrows scroll, b/f or PgUp/PgDn page,
+keys: q quit, 1-4 views, p pause/resume the whole screen (reception goes on),
+      j/k or arrows scroll the log or MMSI table, b/f or PgUp/PgDn page,
       t timeline scale, s MMSI sort, c clear statistics";
 
 struct Opts {
@@ -188,7 +189,7 @@ fn run(o: Opts) -> Result<(), String> {
         Duration::from_millis(100),
         Ev::Key,
         |ev| {
-            let page = ui::raw_rows(&app.borrow(), term::size().1);
+            let page = ui::page_rows(&app.borrow(), term::size().1);
             handle(&mut app.borrow_mut(), ev, page)
         },
         |w, h| {

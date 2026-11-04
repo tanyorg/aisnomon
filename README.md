@@ -92,12 +92,12 @@ scripts or sharing; `--view 1-4` picks which screen.
 | Key | Action |
 |---|---|
 | `1` `2` `3` `4` | main view, channels/types, MMSI table, full-height raw log |
-| `p`, space | pause / resume the NMEA log |
-| `j` `k`, arrows | scroll the log one line (pauses it) |
+| `p`, space | pause / resume: every view shows the same frozen moment while reception and counting go on; the footer shows when it was taken |
+| `j` `k`, arrows | scroll the NMEA log (views 1 and 4) or the MMSI table (view 3) one line; scrolling pauses |
 | `b` `f`, PgUp PgDn | scroll one page |
 | `t` | timeline scale: 1 s, 10 s, 1 min, 10 min, 1 h per column |
 | `s` | MMSI table: sort by last heard or by message count |
-| `c` | clear all statistics |
+| `c` | clear all statistics (also ends a pause) |
 | `q`, `^C` | quit |
 
 ## Screens

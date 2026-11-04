@@ -74,6 +74,7 @@ pub fn fmt_dur(d: Duration) -> String {
 // ----------------------------------------------------------- timeline ---
 
 /// Messages per second, total and per channel ([total, A, B]).
+#[derive(Clone)]
 pub struct Timeline {
     start: Instant,
     base: u64,
@@ -182,6 +183,7 @@ impl MmsiStat {
 
 // ----------------------------------------------------------- raw lines ---
 
+#[derive(Clone)]
 pub struct RawLine {
     pub ts: SystemTime,
     pub chan: char,
@@ -244,13 +246,10 @@ pub enum View {
     Raw,
 }
 
-pub struct App {
-    pub target: String,
-    pub kind: Kind,
-    pub status: String,
-    pub connected: bool,
-    pub reconnects: u64,
-    pub ascii: bool,
+/// Everything the screens show, so the whole picture can be frozen at
+/// once (pause) while reception goes on in the live copy.
+#[derive(Clone)]
+pub struct Stats {
     pub started: Instant,
     pub window: Duration,
     pub c: Counters,
@@ -259,27 +258,13 @@ pub struct App {
     pub mmsi_evicted: u64,
     pub last_msg: Option<Instant>,
     pub raw: VecDeque<RawLine>,
-    /// Lines in `raw` when the view was paused (the frozen bottom).
-    pub paused: Option<usize>,
-    /// Lines scrolled back from the bottom while paused.
-    pub scroll: usize,
-    pub scale: usize,
-    pub view: View,
-    /// MMSI view sorted by message count instead of last heard.
-    pub mmsi_by_count: bool,
-    reasm: frag::Reassembler,
-    esc: Vec<u8>,
+    /// Fragment groups waiting for more fragments.
+    pub pending: usize,
 }
 
-impl App {
-    pub fn new(target: String, ascii: bool, window: Duration, now: Instant) -> Self {
-        App {
-            target,
-            kind: Kind::Unknown,
-            status: String::new(),
-            connected: false,
-            reconnects: 0,
-            ascii,
+impl Stats {
+    pub fn new(window: Duration, now: Instant) -> Self {
+        Stats {
             started: now,
             window,
             c: Counters::default(),
@@ -288,104 +273,8 @@ impl App {
             mmsi_evicted: 0,
             last_msg: None,
             raw: VecDeque::new(),
-            paused: None,
-            scroll: 0,
-            scale: 0,
-            view: View::Main,
-            mmsi_by_count: false,
-            reasm: frag::Reassembler::default(),
-            esc: Vec::new(),
+            pending: 0,
         }
-    }
-
-    /// Reset statistics (not the connection state).
-    pub fn clear(&mut self, now: Instant) {
-        self.started = now;
-        self.c = Counters::default();
-        self.timeline = Timeline::new(now);
-        self.mmsi.clear();
-        self.mmsi_evicted = 0;
-        self.last_msg = None;
-        self.raw.clear();
-        self.paused = None;
-        self.scroll = 0;
-        self.reasm.clear();
-    }
-
-    pub fn toggle_pause(&mut self) {
-        self.paused = match self.paused {
-            Some(_) => None,
-            None => Some(self.raw.len()),
-        };
-        self.scroll = 0;
-    }
-
-    /// Scroll the paused view by `d` lines (positive = back in time).
-    pub fn scroll_by(&mut self, d: isize) {
-        if self.paused.is_none() {
-            self.toggle_pause();
-        }
-        let max = self.paused.unwrap_or(0).saturating_sub(1);
-        self.scroll = (self.scroll as isize + d).clamp(0, max as isize) as usize;
-    }
-
-    /// Handle one key byte. Arrow and page keys arrive as escape sequences.
-    /// Returns false when the user asked to quit.
-    pub fn key(&mut self, k: u8, page: usize, now: Instant) -> bool {
-        if !self.esc.is_empty() || k == 0x1b {
-            self.esc.push(k);
-            let seq = self.esc.clone();
-            let done = match seq.as_slice() {
-                [0x1b] | [0x1b, b'['] | [0x1b, b'[', b'5'] | [0x1b, b'[', b'6'] => false,
-                [0x1b, b'[', b'A'] => {
-                    self.scroll_by(1);
-                    true
-                }
-                [0x1b, b'[', b'B'] => {
-                    self.scroll_by(-1);
-                    true
-                }
-                [0x1b, b'[', b'5', b'~'] => {
-                    self.scroll_by(page as isize);
-                    true
-                }
-                [0x1b, b'[', b'6', b'~'] => {
-                    self.scroll_by(-(page as isize));
-                    true
-                }
-                _ => true,
-            };
-            if done {
-                self.esc.clear();
-            }
-            return true;
-        }
-        match k {
-            b'q' | b'Q' | 3 | 4 => return false, // q, ^C, ^D
-            b'p' | b'P' | b' ' => self.toggle_pause(),
-            b'k' => self.scroll_by(1),
-            b'j' => self.scroll_by(-1),
-            b'b' => self.scroll_by(page as isize),
-            b'f' => self.scroll_by(-(page as isize)),
-            b'c' | b'C' => self.clear(now),
-            b's' | b'S' => self.mmsi_by_count = !self.mmsi_by_count,
-            b't' | b'T' => self.scale = (self.scale + 1) % SCALES.len(),
-            b'1' => self.view = View::Main,
-            b'2' => self.view = View::Types,
-            b'3' => self.view = View::Mmsi,
-            b'4' => self.view = View::Raw,
-            _ => {}
-        }
-        true
-    }
-
-    /// Count fragment groups that timed out. Called on every event.
-    pub fn tick(&mut self, now: Instant) {
-        self.c.incomplete += self.reasm.expire(now) as u64;
-    }
-
-    pub fn pending_frags(&self) -> usize {
-        self.reasm.pending()
     }
 
     pub fn mmsi_recent(&self, now: Instant) -> usize {
@@ -399,14 +288,6 @@ impl App {
         self.raw.push_back(l);
         if self.raw.len() > RAW_KEEP {
             self.raw.pop_front();
-            if let Some(p) = self.paused.as_mut() {
-                // The frozen view keeps showing the same lines.
-                *p = p.saturating_sub(1);
-                if *p == 0 {
-                    self.paused = None;
-                    self.scroll = 0;
-                }
-            }
         }
     }
 
@@ -434,11 +315,178 @@ impl App {
         m.chan[chan.index()] += 1;
         m.types |= 1 << mtype;
     }
+}
+
+/// The picture shown while paused, with the instant it was taken.
+pub struct Frozen {
+    pub s: Stats,
+    pub now: Instant,
+    pub wall: SystemTime,
+}
+
+pub struct App {
+    pub target: String,
+    pub kind: Kind,
+    pub status: String,
+    pub connected: bool,
+    pub reconnects: u64,
+    pub ascii: bool,
+    /// Statistics as they are now; always updated.
+    pub live: Stats,
+    /// Set while paused: what the screens show instead of `live`.
+    pub frozen: Option<Box<Frozen>>,
+    /// Raw log lines scrolled back from the bottom (only while paused).
+    pub scroll: usize,
+    /// First row shown in the MMSI table (only while paused).
+    pub mmsi_scroll: usize,
+    pub scale: usize,
+    pub view: View,
+    /// MMSI view sorted by message count instead of last heard.
+    pub mmsi_by_count: bool,
+    reasm: frag::Reassembler,
+    esc: Vec<u8>,
+}
+
+impl App {
+    pub fn new(target: String, ascii: bool, window: Duration, now: Instant) -> Self {
+        App {
+            target,
+            kind: Kind::Unknown,
+            status: String::new(),
+            connected: false,
+            reconnects: 0,
+            ascii,
+            live: Stats::new(window, now),
+            frozen: None,
+            scroll: 0,
+            mmsi_scroll: 0,
+            scale: 0,
+            view: View::Main,
+            mmsi_by_count: false,
+            reasm: frag::Reassembler::default(),
+            esc: Vec::new(),
+        }
+    }
+
+    /// What the screens show: the frozen picture while paused, else live
+    /// statistics, together with the instant they describe.
+    pub fn shown(&self, now: Instant) -> (&Stats, Instant) {
+        match &self.frozen {
+            Some(f) => (&f.s, f.now),
+            None => (&self.live, now),
+        }
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.frozen.is_some()
+    }
+
+    /// Reset statistics (not the connection state). Also ends a pause,
+    /// since the frozen picture would describe statistics that are gone.
+    pub fn clear(&mut self, now: Instant) {
+        self.live = Stats::new(self.live.window, now);
+        self.reasm.clear();
+        self.resume();
+    }
+
+    pub fn pause(&mut self, now: Instant, wall: SystemTime) {
+        if self.frozen.is_none() {
+            self.frozen = Some(Box::new(Frozen {
+                s: self.live.clone(),
+                now,
+                wall,
+            }));
+            self.scroll = 0;
+            self.mmsi_scroll = 0;
+        }
+    }
+
+    pub fn resume(&mut self) {
+        self.frozen = None;
+        self.scroll = 0;
+        self.mmsi_scroll = 0;
+    }
+
+    pub fn toggle_pause(&mut self, now: Instant, wall: SystemTime) {
+        if self.is_paused() {
+            self.resume();
+        } else {
+            self.pause(now, wall);
+        }
+    }
+
+    /// Scroll the current view by `d` lines (positive = back in time for
+    /// the raw log, down the table for MMSIs). Scrolling pauses, so the
+    /// lines do not move underneath. The types view does not scroll.
+    pub fn scroll_by(&mut self, d: isize, now: Instant) {
+        if self.view == View::Types {
+            return;
+        }
+        self.pause(now, SystemTime::now());
+        let f = &self.frozen.as_ref().expect("paused").s;
+        let (pos, len) = match self.view {
+            View::Mmsi => (&mut self.mmsi_scroll, f.mmsi.len()),
+            _ => (&mut self.scroll, f.raw.len()),
+        };
+        let max = len.saturating_sub(1) as isize;
+        *pos = (*pos as isize + d).clamp(0, max) as usize;
+    }
+
+    /// Handle one key byte. Arrow and page keys arrive as escape sequences.
+    /// Returns false when the user asked to quit.
+    pub fn key(&mut self, k: u8, page: usize, now: Instant) -> bool {
+        // Raw log: up = back in time. MMSI table: down = further down.
+        let dir: isize = if self.view == View::Mmsi { -1 } else { 1 };
+        let page = page as isize;
+        if !self.esc.is_empty() || k == 0x1b {
+            self.esc.push(k);
+            let seq = self.esc.clone();
+            let step = match seq.as_slice() {
+                [0x1b] | [0x1b, b'['] | [0x1b, b'[', b'5'] | [0x1b, b'[', b'6'] => return true,
+                [0x1b, b'[', b'A'] => Some(dir),
+                [0x1b, b'[', b'B'] => Some(-dir),
+                [0x1b, b'[', b'5', b'~'] => Some(dir * page),
+                [0x1b, b'[', b'6', b'~'] => Some(-dir * page),
+                _ => None,
+            };
+            self.esc.clear();
+            if let Some(d) = step {
+                self.scroll_by(d, now);
+            }
+            return true;
+        }
+        match k {
+            b'q' | b'Q' | 3 | 4 => return false, // q, ^C, ^D
+            b'p' | b'P' | b' ' => self.toggle_pause(now, SystemTime::now()),
+            b'k' => self.scroll_by(dir, now),
+            b'j' => self.scroll_by(-dir, now),
+            b'b' => self.scroll_by(dir * page, now),
+            b'f' => self.scroll_by(-dir * page, now),
+            b'c' | b'C' => self.clear(now),
+            b's' | b'S' => {
+                self.mmsi_by_count = !self.mmsi_by_count;
+                self.mmsi_scroll = 0;
+            }
+            b't' | b'T' => self.scale = (self.scale + 1) % SCALES.len(),
+            b'1' => self.view = View::Main,
+            b'2' => self.view = View::Types,
+            b'3' => self.view = View::Mmsi,
+            b'4' => self.view = View::Raw,
+            _ => {}
+        }
+        true
+    }
+
+    /// Count fragment groups that timed out. Called on every event.
+    pub fn tick(&mut self, now: Instant) {
+        self.live.c.incomplete += self.reasm.expire(now) as u64;
+        self.live.pending = self.reasm.pending();
+    }
 
     /// Process one received line.
     pub fn line(&mut self, ts: SystemTime, text: String, now: Instant) {
         self.tick(now);
-        self.c.lines += 1;
+        self.live.c.lines += 1;
         let mut raw = RawLine {
             ts,
             chan: ' ',
@@ -449,19 +497,20 @@ impl App {
         };
         self.classify(&text, now, &mut raw);
         raw.text = text;
-        self.push_raw(raw);
+        self.live.push_raw(raw);
+        self.live.pending = self.reasm.pending();
     }
 
     fn classify(&mut self, text: &str, now: Instant, raw: &mut RawLine) {
         let (tag, rest) = nmea::strip_tag(text);
         if let Some(tb) = &tag {
-            self.c.tag_blocks += 1;
+            self.live.c.tag_blocks += 1;
             if tb.ck != CkStatus::Ok {
-                self.c.tag_ck_bad += 1;
+                self.live.c.tag_ck_bad += 1;
             }
         }
         let Some(s) = nmea::split(rest) else {
-            self.c.not_nmea += 1;
+            self.live.c.not_nmea += 1;
             raw.note = "not NMEA".into();
             raw.style = st::YELLOW;
             return;
@@ -469,34 +518,34 @@ impl App {
         match s.ck {
             CkStatus::Ok => {}
             CkStatus::Bad { got, want } => {
-                self.c.ck_bad += 1;
+                self.live.c.ck_bad += 1;
                 raw.note = format!("CK {got:02X}!={want:02X}");
                 raw.style = st::RED;
                 return;
             }
             CkStatus::Missing => {
-                self.c.ck_missing += 1;
+                self.live.c.ck_missing += 1;
                 raw.note = "no CK".into();
                 raw.style = st::RED;
                 return;
             }
         }
-        self.c.valid += 1;
+        self.live.c.valid += 1;
         if tag.as_ref().is_some_and(|t| t.ck != CkStatus::Ok) {
             raw.note = "tag CK".into();
             raw.style = st::YELLOW;
         }
         if !ais::is_vdm(&s) {
-            self.c.other += 1;
+            self.live.c.other += 1;
             raw.note = s.addr.chars().take(10).collect();
             raw.style = st::DIM;
             return;
         }
-        self.c.vdm_sentences += 1;
+        self.live.c.vdm_sentences += 1;
         let v = match ais::parse_vdm(&s) {
             Ok(v) => v,
             Err(e) => {
-                self.c.vdm_err += 1;
+                self.live.c.vdm_err += 1;
                 raw.note = format!("bad {e}");
                 raw.style = st::RED;
                 return;
@@ -507,9 +556,9 @@ impl App {
             raw.frag = format!("{}/{}", v.num, v.count);
         }
         let fed = self.reasm.feed(s.addr, &v, now);
-        self.c.incomplete += fed.dropped as u64;
-        self.c.out_of_order += fed.out_of_order as u64;
-        self.c.duplicate += fed.duplicate as u64;
+        self.live.c.incomplete += fed.dropped as u64;
+        self.live.c.out_of_order += fed.out_of_order as u64;
+        self.live.c.duplicate += fed.duplicate as u64;
         let (payload, fill, count) = match fed.out {
             frag::Out::Pending { .. } => {
                 raw.note = if fed.duplicate {
@@ -537,7 +586,7 @@ impl App {
         let bits = match ais::dearmor(&payload, fill) {
             Ok(b) => b,
             Err(e) => {
-                self.c.armor_err += 1;
+                self.live.c.armor_err += 1;
                 raw.note = e.to_string();
                 raw.style = st::RED;
                 return;
@@ -546,7 +595,7 @@ impl App {
         let h = match ais::header(&bits) {
             Ok(h) => h,
             Err(e) => {
-                self.c.header_err += 1;
+                self.live.c.header_err += 1;
                 raw.note = e.to_string();
                 raw.style = st::RED;
                 return;
@@ -558,12 +607,12 @@ impl App {
         match h.len {
             LenCheck::Ok => {}
             LenCheck::Short => {
-                self.c.len_short += 1;
+                self.live.c.len_short += 1;
                 raw.note.push_str(&format!(" short {}b", h.bits));
                 raw.style = st::YELLOW;
             }
             LenCheck::Long => {
-                self.c.len_long += 1;
+                self.live.c.len_long += 1;
                 raw.note.push_str(&format!(" long {}b", h.bits));
                 raw.style = st::YELLOW;
             }
@@ -572,28 +621,28 @@ impl App {
             raw.style = st::YELLOW;
         }
         if v.own {
-            self.c.own += 1;
+            self.live.c.own += 1;
             return;
         }
-        self.c.messages += 1;
+        self.live.c.messages += 1;
         if count > 1 {
-            self.c.multipart += 1;
+            self.live.c.multipart += 1;
         }
-        self.c.chan[v.chan.index()] += 1;
-        self.c.types[h.mtype as usize] += 1;
-        self.c.type_last[h.mtype as usize] = Some(now);
+        self.live.c.chan[v.chan.index()] += 1;
+        self.live.c.types[h.mtype as usize] += 1;
+        self.live.c.type_last[h.mtype as usize] = Some(now);
         let ti = h.mtype as usize;
         match h.len {
             LenCheck::Ok => {}
-            LenCheck::Short => self.c.type_len_short[ti] += 1,
-            LenCheck::Long => self.c.type_len_long[ti] += 1,
+            LenCheck::Short => self.live.c.type_len_short[ti] += 1,
+            LenCheck::Long => self.live.c.type_len_long[ti] += 1,
         }
         if h.len != LenCheck::Ok {
-            self.c.type_len_bits[ti] = Some(h.bits);
+            self.live.c.type_len_bits[ti] = Some(h.bits);
         }
-        self.last_msg = Some(now);
-        self.timeline.add(now, v.chan);
-        self.note_mmsi(h.mmsi, h.mtype, v.chan, now);
+        self.live.last_msg = Some(now);
+        self.live.timeline.add(now, v.chan);
+        self.live.note_mmsi(h.mmsi, h.mtype, v.chan, now);
     }
 }
 
@@ -635,7 +684,7 @@ mod tests {
         ] {
             a.line(ts, l.into(), t);
         }
-        let c = &a.c;
+        let c = &a.live.c;
         assert_eq!(c.lines, 8);
         assert_eq!((c.valid, c.ck_bad, c.ck_missing, c.not_nmea), (5, 1, 1, 1));
         assert_eq!(
@@ -645,9 +694,9 @@ mod tests {
         assert_eq!(c.own, 1);
         assert_eq!(c.chan, [1, 1, 0]);
         assert_eq!((c.types[1], c.types[5]), (1, 1));
-        assert_eq!(a.mmsi.len(), 2);
-        assert_eq!(a.mmsi_recent(t), 2);
-        let notes: Vec<&str> = a.raw.iter().map(|r| r.note.as_str()).collect();
+        assert_eq!(a.live.mmsi.len(), 2);
+        assert_eq!(a.live.mmsi_recent(t), 2);
+        let notes: Vec<&str> = a.live.raw.iter().map(|r| r.note.as_str()).collect();
         assert_eq!(
             notes,
             [
@@ -661,12 +710,12 @@ mod tests {
                 "own T1 477553000"
             ]
         );
-        assert_eq!(a.raw[5].frag, "1/2");
-        assert_eq!(a.raw[0].chan, 'B');
-        assert_eq!(a.c.type_len_short, [0; 28]);
+        assert_eq!(a.live.raw[5].frag, "1/2");
+        assert_eq!(a.live.raw[0].chan, 'B');
+        assert_eq!(a.live.c.type_len_short, [0; 28]);
         // MMSIs keep their leading zeros: 00MIDxxxx is a coast station
         a.line(ts, "!AIVDM,1,1,,B,D0476ch0@Bfp?`B`?`0,4*5D".into(), t);
-        assert_eq!(a.raw.back().unwrap().note, "T20 004310703");
+        assert_eq!(a.live.raw.back().unwrap().note, "T20 004310703");
     }
 
     #[test]
@@ -683,11 +732,18 @@ mod tests {
             let ck = body.bytes().fold(0u8, |a, b| a ^ b);
             a.line(ts, format!("!{body}*{ck:02X}"), t);
         }
-        assert_eq!((a.c.len_short, a.c.len_long), (2, 1));
+        assert_eq!((a.live.c.len_short, a.live.c.len_long), (2, 1));
         // VDO is not a received message: per-type counts exclude it
-        assert_eq!((a.c.type_len_short[1], a.c.type_len_long[1]), (1, 1));
-        assert_eq!(a.c.type_len_bits[1], Some(174));
-        assert!(a.raw[0].note.ends_with("short 162b"), "{}", a.raw[0].note);
+        assert_eq!(
+            (a.live.c.type_len_short[1], a.live.c.type_len_long[1]),
+            (1, 1)
+        );
+        assert_eq!(a.live.c.type_len_bits[1], Some(174));
+        assert!(
+            a.live.raw[0].note.ends_with("short 162b"),
+            "{}",
+            a.live.raw[0].note
+        );
     }
 
     #[test]
@@ -701,8 +757,8 @@ mod tests {
             t,
         );
         a.tick(t + frag::TIMEOUT);
-        assert_eq!(a.c.incomplete, 1);
-        assert_eq!(a.c.messages, 0);
+        assert_eq!(a.live.c.incomplete, 1);
+        assert_eq!(a.live.c.messages, 0);
     }
 
     #[test]
@@ -735,9 +791,12 @@ mod tests {
             a.line(SystemTime::now(), format!("x{i}"), t);
         }
         assert!(a.key(b'p', 5, t));
-        assert_eq!(a.paused, Some(10));
-        a.line(SystemTime::now(), "late".into(), t);
-        assert_eq!(a.paused, Some(10));
+        assert!(a.is_paused());
+        // reception goes on; the shown picture does not move
+        a.line(SystemTime::now(), "late".into(), t + Duration::from_secs(5));
+        assert_eq!(a.live.c.lines, 11);
+        let (shown, at) = a.shown(t + Duration::from_secs(9));
+        assert_eq!((shown.c.lines, shown.raw.len(), at), (10, 10, t));
         for k in *b"\x1b[5~" {
             a.key(k, 5, t);
         }
@@ -748,8 +807,26 @@ mod tests {
         assert_eq!(a.scroll, 6);
         a.key(b'b', 50, t);
         assert_eq!(a.scroll, 9);
+        // switching views keeps the same frozen picture
+        a.key(b'2', 5, t);
+        assert_eq!(a.shown(t).0.c.lines, 10);
         a.key(b' ', 5, t);
-        assert_eq!((a.paused, a.scroll), (None, 0));
+        assert!(!a.is_paused());
+        assert_eq!((a.scroll, a.shown(t).0.c.lines), (0, 11));
+        // scrolling from a live view pauses it
+        a.key(b'1', 5, t);
+        a.key(b'k', 5, t);
+        assert!(a.is_paused() && a.scroll == 1);
+        // the types view does not scroll and does not pause on j/k
+        a.key(b'p', 5, t);
+        a.key(b'2', 5, t);
+        a.key(b'k', 5, t);
+        assert!(!a.is_paused());
+        // clearing ends a pause
+        a.key(b'p', 5, t);
+        a.key(b'c', 5, t);
+        assert!(!a.is_paused());
+        assert_eq!(a.live.c.lines, 0);
         a.key(b't', 5, t);
         assert_eq!(a.scale, 1);
         a.key(b'3', 5, t);
@@ -758,19 +835,47 @@ mod tests {
     }
 
     #[test]
+    fn mmsi_scroll() {
+        let (mut a, t) = app();
+        for i in 0..30 {
+            a.live.note_mmsi(200_000_000 + i, 1, Chan::A, t);
+        }
+        a.key(b'3', 10, t);
+        // down arrow / j / PgDn move down the table
+        for k in *b"\x1b[B" {
+            a.key(k, 10, t);
+        }
+        assert!(a.is_paused());
+        assert_eq!(a.mmsi_scroll, 1);
+        a.key(b'f', 10, t);
+        assert_eq!(a.mmsi_scroll, 11);
+        a.key(b'f', 100, t);
+        assert_eq!(a.mmsi_scroll, 29);
+        a.key(b'k', 10, t);
+        assert_eq!(a.mmsi_scroll, 28);
+        // re-sorting starts from the top; the raw log offset is separate
+        a.key(b's', 10, t);
+        assert_eq!((a.mmsi_scroll, a.scroll), (0, 0));
+        // an unknown escape sequence is swallowed whole
+        for k in *b"\x1b[Zq" {
+            assert!(a.key(k, 10, t) || k == b'q');
+        }
+    }
+
+    #[test]
     fn mmsi_table_bounded() {
         let (mut a, t) = app();
         for i in 0..(MAX_MMSI as u32 + 10) {
-            a.note_mmsi(
+            a.live.note_mmsi(
                 200_000_000 + i,
                 1,
                 Chan::A,
                 t + Duration::from_millis(i as u64),
             );
         }
-        assert_eq!(a.mmsi.len(), MAX_MMSI);
-        assert_eq!(a.mmsi_evicted, 10);
-        assert!(!a.mmsi.contains_key(&200_000_000));
+        assert_eq!(a.live.mmsi.len(), MAX_MMSI);
+        assert_eq!(a.live.mmsi_evicted, 10);
+        assert!(!a.live.mmsi.contains_key(&200_000_000));
     }
 
     /// Mutated and random input must never panic, and every line is counted
@@ -820,11 +925,11 @@ mod tests {
                 }
             }
         }
-        let c = &a.c;
+        let c = &a.live.c;
         assert_eq!(c.lines, c.valid + c.ck_bad + c.ck_missing + c.not_nmea);
         assert!(c.messages > 0 && c.ck_bad > 0 && c.vdm_err + c.armor_err + c.header_err > 0);
-        assert!(a.raw.len() <= RAW_KEEP);
-        assert!(a.pending_frags() <= frag::MAX_PENDING);
+        assert!(a.live.raw.len() <= RAW_KEEP);
+        assert!(a.live.pending <= frag::MAX_PENDING);
         crate::ui::render(&a, t + Duration::from_secs(30), ts, 120, 40);
     }
 }

@@ -2,7 +2,7 @@
 //! Detail views: channels/types/errors, MMSI table, full-height raw log.
 
 use crate::ais;
-use crate::app::{fmt_dur, fmt_tod, fmt_utc, unix, App, RawLine, View, SCALES};
+use crate::app::{fmt_dur, fmt_tod, fmt_utc, unix, App, RawLine, Stats, View, SCALES};
 use crate::term::{st, Canvas};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -158,30 +158,35 @@ pub fn render(app: &App, now: Instant, wall: SystemTime, w: usize, h: usize) -> 
         return c;
     }
     header(&mut c, app, wall);
+    // While paused everything below the header is the frozen picture,
+    // described at the instant it was taken.
+    let (s, now) = app.shown(now);
     let body = h - 2;
     match app.view {
         View::Main => {
-            summary(&mut c, app, now, 1, w);
+            summary(&mut c, s, now, 1, w);
             let rest = body - SUMMARY_H;
             let tl = (rest * 2 / 5).clamp(6, 14);
-            timeline(&mut c, app, now, 1 + SUMMARY_H, w, tl);
-            raw_box(&mut c, app, 1 + SUMMARY_H + tl, w, rest - tl);
+            timeline(&mut c, app, s, now, 1 + SUMMARY_H, w, tl);
+            raw_box(&mut c, app, s, 1 + SUMMARY_H + tl, w, rest - tl);
         }
-        View::Types => types_view(&mut c, app, now, 1, w, body),
-        View::Mmsi => mmsi_view(&mut c, app, now, 1, w, body),
-        View::Raw => raw_box(&mut c, app, 1, w, body),
+        View::Types => types_view(&mut c, s, now, 1, w, body),
+        View::Mmsi => mmsi_view(&mut c, app, s, now, 1, w, body),
+        View::Raw => raw_box(&mut c, app, s, 1, w, body),
     }
     footer(&mut c, app, h - 1);
     c
 }
 
-/// Rows available for the raw log, for page-wise scrolling.
-pub fn raw_rows(app: &App, h: usize) -> usize {
+/// Rows of the scrollable list in the current view (raw log or MMSI
+/// table), for page-wise scrolling.
+pub fn page_rows(app: &App, h: usize) -> usize {
     if h < MIN_H {
         return 1;
     }
     match app.view {
         View::Raw => h - 4,
+        View::Mmsi => h - 5,
         _ => {
             let rest = h - 2 - SUMMARY_H;
             (rest - (rest * 2 / 5).clamp(6, 14))
@@ -223,8 +228,20 @@ fn footer(c: &mut Canvas, app: &App, y: usize) {
         x = c.put(x, y, &format!("{k} {label}"), style);
         x = c.put(x, y, " ", 0);
     }
+    if let Some(f) = &app.frozen {
+        let tod = fmt_tod(unix(f.wall), 0);
+        x = c.put(x, y, &format!(" PAUSED {tod}Z "), st::REV | st::YELLOW);
+        let keys = match app.view {
+            View::Types => " p resume  c clear  q quit",
+            View::Mmsi => " p resume  j/k scroll  s sort  q quit",
+            _ => " p resume  j/k scroll  t scale  q quit",
+        };
+        c.put(x, y, keys, st::DIM);
+        return;
+    }
     let keys = match app.view {
-        View::Mmsi => " s sort  c clear  q quit",
+        View::Types => " p pause  c clear  q quit",
+        View::Mmsi => " p pause  j/k scroll  s sort  c clear  q quit",
         _ => " p pause  j/k scroll  t scale  c clear  q quit",
     };
     c.put(x, y, keys, st::DIM);
@@ -241,9 +258,9 @@ fn field(c: &mut Canvas, col: (usize, usize), y: usize, label: &str, value: &str
     c.put(x + LABEL_W[i], y, value, style);
 }
 
-fn summary(c: &mut Canvas, app: &App, now: Instant, y: usize, w: usize) {
+fn summary(c: &mut Canvas, s: &Stats, now: Instant, y: usize, w: usize) {
     c.boxed(0, y, w, SUMMARY_H, "SUMMARY");
-    let k = &app.c;
+    let k = &s.c;
     let cw = (w - 4) / 3;
     let (x1, x2, x3) = ((2, 0), (2 + cw, 1), (2 + 2 * cw, 2));
     let y = y + 1;
@@ -254,7 +271,7 @@ fn summary(c: &mut Canvas, app: &App, now: Instant, y: usize, w: usize) {
         x1,
         y + 1,
         "Rate 10s",
-        &fmt_rate(app.timeline.rate(now, 10)),
+        &fmt_rate(s.timeline.rate(now, 10)),
         0,
     );
     field(
@@ -262,10 +279,10 @@ fn summary(c: &mut Canvas, app: &App, now: Instant, y: usize, w: usize) {
         x1,
         y + 2,
         "Rate 1m",
-        &fmt_rate(app.timeline.rate(now, 60)),
+        &fmt_rate(s.timeline.rate(now, 60)),
         0,
     );
-    let (last, style) = match app.last_msg {
+    let (last, style) = match s.last_msg {
         None => ("-".to_string(), st::DIM),
         Some(t) => {
             let d = now.saturating_duration_since(t);
@@ -279,7 +296,7 @@ fn summary(c: &mut Canvas, app: &App, now: Instant, y: usize, w: usize) {
         x1,
         y + 4,
         "Uptime",
-        &fmt_dur(now.saturating_duration_since(app.started)),
+        &fmt_dur(now.saturating_duration_since(s.started)),
         0,
     );
 
@@ -299,14 +316,14 @@ fn summary(c: &mut Canvas, app: &App, now: Instant, y: usize, w: usize) {
         c,
         x2,
         y + 3,
-        &format!("MMSI {}", window_label(app.window)),
-        &app.mmsi_recent(now).to_string(),
+        &format!("MMSI {}", window_label(s.window)),
+        &s.mmsi_recent(now).to_string(),
         st::BOLD,
     );
-    let all = if app.mmsi_evicted > 0 {
-        format!("{}+", app.mmsi.len() as u64 + app.mmsi_evicted)
+    let all = if s.mmsi_evicted > 0 {
+        format!("{}+", s.mmsi.len() as u64 + s.mmsi_evicted)
     } else {
-        app.mmsi.len().to_string()
+        s.mmsi.len().to_string()
     };
     field(c, x2, y + 4, "MMSI all", &all, 0);
 
@@ -361,8 +378,8 @@ fn summary(c: &mut Canvas, app: &App, now: Instant, y: usize, w: usize) {
 
 /// Mean msg/s per column, oldest first. The newest column holds the
 /// complete seconds of the current, possibly partial, interval.
-pub fn columns(app: &App, now: Instant, scale: u64, n: usize) -> Vec<Option<f64>> {
-    let cur = app.timeline.sec(now);
+pub fn columns(s: &Stats, now: Instant, scale: u64, n: usize) -> Vec<Option<f64>> {
+    let cur = s.timeline.sec(now);
     let mut out = vec![None; n];
     if cur == 0 {
         return out;
@@ -373,7 +390,7 @@ pub fn columns(app: &App, now: Instant, scale: u64, n: usize) -> Vec<Option<f64>
             break;
         };
         let end = (start + scale).min(cur);
-        let sum = app.timeline.sum(start, end)[0];
+        let sum = s.timeline.sum(start, end)[0];
         *slot = Some(sum as f64 / (end - start) as f64);
     }
     out
@@ -383,7 +400,7 @@ const BARS: [char; 8] = [
     '\u{2581}', '\u{2582}', '\u{2583}', '\u{2584}', '\u{2585}', '\u{2586}', '\u{2587}', '\u{2588}',
 ];
 
-fn timeline(c: &mut Canvas, app: &App, now: Instant, y: usize, w: usize, h: usize) {
+fn timeline(c: &mut Canvas, app: &App, s: &Stats, now: Instant, y: usize, w: usize, h: usize) {
     let scale = SCALES[app.scale];
     let title = format!(
         "RECEPTION TIMELINE  msg/s, {}/column  [t]",
@@ -394,7 +411,7 @@ fn timeline(c: &mut Canvas, app: &App, now: Instant, y: usize, w: usize, h: usiz
     let rows = h - 3; // chart rows; one row for the axis
     let x0 = 1 + LABEL;
     let ncol = w - 2 - LABEL - 1;
-    let cols = columns(app, now, scale, ncol);
+    let cols = columns(s, now, scale, ncol);
     let max = cols.iter().flatten().fold(0.0f64, |a, &b| a.max(b));
     let top = if max > 0.0 { max } else { 1.0 };
     c.put(1, y + 1, &format!("{:>7}", fmt_rate(Some(top))), st::DIM);
@@ -454,37 +471,36 @@ fn raw_line(c: &mut Canvas, l: &RawLine, x: usize, y: usize, w: usize) {
     }
 }
 
-fn raw_box(c: &mut Canvas, app: &App, y: usize, w: usize, h: usize) {
-    let title = match app.paused {
-        Some(_) if app.scroll > 0 => format!(
+fn raw_box(c: &mut Canvas, app: &App, s: &Stats, y: usize, w: usize, h: usize) {
+    let title = if !app.is_paused() {
+        "NMEA RECEIVED  [p] pause".to_string()
+    } else if app.scroll > 0 {
+        format!(
             "NMEA RECEIVED  PAUSED, {} lines back  [p] resume  [j/k] scroll",
             app.scroll
-        ),
-        Some(_) => "NMEA RECEIVED  PAUSED  [p] resume  [j/k] scroll".to_string(),
-        None => "NMEA RECEIVED  [p] pause".to_string(),
+        )
+    } else {
+        "NMEA RECEIVED  PAUSED  [p] resume  [j/k] scroll".to_string()
     };
     c.boxed(0, y, w, h, &title);
     if h < 3 {
         return;
     }
     let n = h - 2;
-    let end = app
-        .paused
-        .unwrap_or(app.raw.len())
-        .saturating_sub(app.scroll);
+    let end = s.raw.len().saturating_sub(app.scroll);
     let start = end.saturating_sub(n);
-    for (i, l) in app.raw.range(start..end).enumerate() {
+    for (i, l) in s.raw.range(start..end).enumerate() {
         raw_line(c, l, 2, y + 1 + i, w - 4);
     }
 }
 
-fn types_view(c: &mut Canvas, app: &App, now: Instant, y: usize, w: usize, h: usize) {
-    let k = &app.c;
+fn types_view(c: &mut Canvas, s: &Stats, now: Instant, y: usize, w: usize, h: usize) {
+    let k = &s.c;
     let lw = 40.min(w / 2);
     c.boxed(0, y, lw, h, "CHANNELS & INTEGRITY");
-    let cur = app.timeline.sec(now);
+    let cur = s.timeline.sec(now);
     let span = cur.min(600);
-    let recent = app.timeline.sum(cur - span, cur);
+    let recent = s.timeline.sum(cur - span, cur);
     let mut yy = y + 1;
     c.put(2, yy, "Chan     Msgs      %   10m rate", st::DIM);
     yy += 1;
@@ -528,7 +544,7 @@ fn types_view(c: &mut Canvas, app: &App, now: Instant, y: usize, w: usize, h: us
         ("Length short", k.len_short, st::YELLOW),
         ("Length long", k.len_long, st::YELLOW),
         ("Own (VDO) msgs", k.own, st::CYAN),
-        ("Pending frags", app.pending_frags() as u64, 0),
+        ("Pending frags", s.pending as u64, 0),
     ];
     for (label, v, s) in rows {
         if yy >= y + h - 1 {
@@ -615,7 +631,7 @@ fn types_view(c: &mut Canvas, app: &App, now: Instant, y: usize, w: usize, h: us
     }
 }
 
-fn mmsi_view(c: &mut Canvas, app: &App, now: Instant, y: usize, w: usize, h: usize) {
+fn mmsi_view(c: &mut Canvas, app: &App, s: &Stats, now: Instant, y: usize, w: usize, h: usize) {
     let sort = if app.mmsi_by_count {
         "by count"
     } else {
@@ -628,9 +644,9 @@ fn mmsi_view(c: &mut Canvas, app: &App, now: Instant, y: usize, w: usize, h: usi
         h,
         &format!(
             "MMSI  {} heard in {}, {} total, sorted {sort}  [s]",
-            app.mmsi_recent(now),
-            window_label(app.window),
-            app.mmsi.len()
+            s.mmsi_recent(now),
+            window_label(s.window),
+            s.mmsi.len()
         ),
     );
     c.put(
@@ -639,16 +655,18 @@ fn mmsi_view(c: &mut Canvas, app: &App, now: Instant, y: usize, w: usize, h: usi
         "MMSI       Kind       Msgs      A      B  Interval    Last  Types",
         st::DIM,
     );
-    let mut v: Vec<_> = app.mmsi.iter().collect();
+    let mut v: Vec<_> = s.mmsi.iter().collect();
     if app.mmsi_by_count {
         v.sort_by(|a, b| b.1.count.cmp(&a.1.count).then(a.0.cmp(b.0)));
     } else {
         v.sort_by(|a, b| b.1.last.cmp(&a.1.last).then(a.0.cmp(b.0)));
     }
     let rows = h.saturating_sub(3);
-    for (i, (mmsi, m)) in v.iter().take(rows).enumerate() {
+    // Keep the last page full when scrolled past the end.
+    let first = app.mmsi_scroll.min(v.len().saturating_sub(rows));
+    for (i, (mmsi, m)) in v.iter().skip(first).take(rows).enumerate() {
         let age = now.saturating_duration_since(m.last);
-        let style = if age > app.window { st::DIM } else { 0 };
+        let style = if age > s.window { st::DIM } else { 0 };
         let iv = m.mean_interval().map(fmt_dur).unwrap_or_else(|| "-".into());
         let line = format!(
             "{mmsi:09}  {:<8} {:>6} {:>6} {:>6} {:>9} {:>7}  {}",
@@ -664,12 +682,13 @@ fn mmsi_view(c: &mut Canvas, app: &App, now: Instant, y: usize, w: usize, h: usi
         c.put(2, y + 2 + i, &line, style);
     }
     if v.len() > rows && rows > 0 {
-        c.put(
-            w - 16,
-            y + h - 1,
-            &format!(" {} more ", v.len() - rows),
-            st::DIM,
+        let pos = format!(
+            " {}-{} of {} ",
+            first + 1,
+            (first + rows).min(v.len()),
+            v.len()
         );
+        c.put(w - 2 - pos.len(), y + h - 1, &pos, st::DIM);
     }
 }
 
@@ -723,7 +742,7 @@ mod tests {
                     (10, 3),
                 ] {
                     render(&a, now, SystemTime::now(), w, h);
-                    raw_rows(&a, h);
+                    page_rows(&a, h);
                 }
             }
         }
@@ -759,9 +778,9 @@ mod tests {
     fn summary_columns_do_not_touch() {
         let t = Instant::now();
         let mut a = sample_app(t);
-        a.c.messages = 9_999_999;
-        a.c.chan = [9_999_999, 0, 0];
-        a.c.valid = 9_999_999;
+        a.live.c.messages = 9_999_999;
+        a.live.c.chan = [9_999_999, 0, 0];
+        a.live.c.valid = 9_999_999;
         let s = render(&a, t, SystemTime::now(), 80, 24).text();
         let cw = (80 - 4) / 3;
         for row in s.lines().skip(2).take(5) {
@@ -779,11 +798,11 @@ mod tests {
         let t = Instant::now();
         let mut a = sample_app(t);
         for ty in 1..=27 {
-            a.c.types[ty] = 99_999_999;
-            a.c.type_last[ty] = Some(t);
+            a.live.c.types[ty] = 99_999_999;
+            a.live.c.type_last[ty] = Some(t);
         }
-        a.c.messages = 99_999_999;
-        a.c.chan = [99_999_999; 3];
+        a.live.c.messages = 99_999_999;
+        a.live.c.chan = [99_999_999; 3];
         let now = t + Duration::from_secs(86_400 * 30);
         for view in [View::Main, View::Types, View::Mmsi, View::Raw] {
             a.view = view;
@@ -800,8 +819,8 @@ mod tests {
         let s = render(&a, now, SystemTime::now(), 80, 40).text();
         assert!(s.contains(" 5 Static A  100.0M 100.0%       30d"), "{s}");
         // length errors per type, and the bit length on a wide screen
-        a.c.type_len_short[5] = 3;
-        a.c.type_len_bits[5] = Some(418);
+        a.live.c.type_len_short[5] = 3;
+        a.live.c.type_len_bits[5] = Some(418);
         let s = render(&a, now, SystemTime::now(), 80, 40).text();
         assert!(s.contains("100.0%    3  30d \u{2502}"), "{s}");
         let s = render(&a, now, SystemTime::now(), 120, 40).text();
@@ -826,6 +845,91 @@ mod tests {
         }
     }
 
+    /// Every view shows the frozen picture while paused, the footer says
+    /// since when, and resuming shows live statistics again.
+    #[test]
+    fn paused_views_show_the_frozen_picture() {
+        let t = Instant::now();
+        let mut a = sample_app(t);
+        let at = t + Duration::from_secs(60);
+        a.pause(at, SystemTime::UNIX_EPOCH + Duration::from_secs(10));
+        let ts = SystemTime::now();
+        for i in 0..50 {
+            let now = at + Duration::from_secs(i);
+            a.line(
+                ts,
+                "!AIVDM,1,1,,A,15N4cJ`005Jrek0H@9n`DW5608EP,0*10".into(),
+                now,
+            );
+        }
+        assert_eq!(a.live.c.messages, 290);
+        let later = at + Duration::from_secs(300);
+        a.view = View::Main;
+        let s = render(&a, later, SystemTime::now(), 100, 30).text();
+        assert!(s.contains("Messages   240"), "{s}");
+        assert!(s.contains("Uptime     1m00s"), "{s}");
+        assert!(s.contains("PAUSED 00:00:10Z"), "{s}");
+        assert!(s.contains("NMEA RECEIVED  PAUSED"), "{s}");
+        a.view = View::Types;
+        let s = render(&a, later, SystemTime::now(), 100, 30).text();
+        assert!(s.contains(" 1 Pos A        120  50.0%        0s"), "{s}");
+        assert!(s.contains("PAUSED 00:00:10Z"), "{s}");
+        a.view = View::Mmsi;
+        let s = render(&a, later, SystemTime::now(), 100, 30).text();
+        assert!(s.contains("2 heard in 10m, 2 total"), "{s}");
+        a.resume();
+        let s = render(&a, later, SystemTime::now(), 100, 30).text();
+        assert!(s.contains("3 total"), "{s}");
+        assert!(!s.contains("PAUSED"), "{s}");
+    }
+
+    #[test]
+    fn mmsi_table_scrolls_with_position() {
+        let t = Instant::now();
+        let mut a = App::new("x".into(), false, DEFAULT_WINDOW, t);
+        let ts = SystemTime::now();
+        let mut x: u64 = 1;
+        for i in 0..40u32 {
+            // vary the MMSI by re-armoring a type 1 header
+            let mmsi = 244_000_000 + i;
+            let bits = format!("{:06b}00{:030b}{}", 1, mmsi, "0".repeat(130));
+            let payload: String = bits
+                .as_bytes()
+                .chunks(6)
+                .map(|c| {
+                    let v = u8::from_str_radix(std::str::from_utf8(c).unwrap(), 2).unwrap();
+                    (if v < 40 { v + 48 } else { v + 56 }) as char
+                })
+                .collect();
+            let body = format!("AIVDM,1,1,,A,{payload},0");
+            let ck = body.bytes().fold(0u8, |a, b| a ^ b);
+            x += 1;
+            a.line(
+                ts,
+                format!("!{body}*{ck:02X}"),
+                t + Duration::from_millis(x),
+            );
+        }
+        assert_eq!(a.live.mmsi.len(), 40);
+        a.view = View::Mmsi;
+        let page = page_rows(&a, 24);
+        assert_eq!(page, 19);
+        let s = render(&a, t, SystemTime::now(), 80, 24).text();
+        assert!(s.contains(" 1-19 of 40 "), "{s}");
+        assert!(s.contains("244000039"), "{s}"); // newest first
+        a.key(b'f', page, t);
+        let s = render(&a, t, SystemTime::now(), 80, 24).text();
+        assert!(s.contains(" 20-38 of 40 ") && s.contains("PAUSED"), "{s}");
+        assert!(!s.contains("244000039"), "{s}");
+        // scrolled past the end: the last page stays full
+        a.key(b'f', page, t);
+        let s = render(&a, t, SystemTime::now(), 80, 24).text();
+        assert!(
+            s.contains(" 22-40 of 40 ") && s.contains("244000000"),
+            "{s}"
+        );
+    }
+
     #[test]
     fn axis_labels() {
         assert_eq!(fmt_age(90), "1m30s");
@@ -846,12 +950,12 @@ mod tests {
         let t = Instant::now();
         let a = sample_app(t);
         let now = t + Duration::from_secs(61);
-        let cols = columns(&a, now, 10, 10);
+        let cols = columns(&a.live, now, 10, 10);
         // seconds 0..60 have 4 msg/s; the newest column is second 60 alone
         assert_eq!(cols[9], Some(0.0));
         assert_eq!(cols[8], Some(4.0));
         assert_eq!(cols[3], Some(4.0));
         assert_eq!(cols[2], None);
-        assert!(columns(&a, t, 1, 5).iter().all(Option::is_none));
+        assert!(columns(&a.live, t, 1, 5).iter().all(Option::is_none));
     }
 }
