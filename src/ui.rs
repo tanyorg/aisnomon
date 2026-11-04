@@ -29,6 +29,16 @@ pub fn hostname() -> String {
     h.split('.').next().unwrap_or("").to_string()
 }
 
+/// The last `n` characters of `s`, with a leading "..." when cut.
+fn tail(s: &str, n: usize) -> String {
+    let len = s.chars().count();
+    if len <= n {
+        return s.to_string();
+    }
+    let keep = n.saturating_sub(3);
+    format!("...{}", s.chars().skip(len - keep).collect::<String>())
+}
+
 fn pct(n: u64, d: u64) -> String {
     if d == 0 {
         "-".into()
@@ -37,14 +47,31 @@ fn pct(n: u64, d: u64) -> String {
     }
 }
 
-/// Compact age for axis labels: 30s, 5m, 2h, 1d.
+/// Exact compact age for axis labels: 30s, 1m30s, 5m, 2h, 1h30m, 1d.
 fn fmt_age(s: u64) -> String {
-    match s {
-        0..=59 => format!("{s}s"),
-        60..=3599 => format!("{}m", s / 60),
-        3600..=86399 => format!("{}h", s / 3600),
-        _ => format!("{}d", s / 86400),
+    let (d, h, m, sec) = (s / 86400, s / 3600 % 24, s / 60 % 60, s % 60);
+    let mut out = String::new();
+    for (v, u) in [(d, "d"), (h, "h"), (m, "m"), (sec, "s")] {
+        if v > 0 {
+            out.push_str(&format!("{v}{u}"));
+        }
     }
+    if out.is_empty() {
+        out.push_str("0s");
+    }
+    out
+}
+
+/// Tick spacing in seconds: the smallest "round" interval that leaves at
+/// least `min_cols` columns between labels.
+fn tick_interval(scale: u64, min_cols: u64) -> u64 {
+    const NICE: [u64; 17] = [
+        5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400, 172800,
+    ];
+    NICE.iter()
+        .copied()
+        .find(|&t| t % scale == 0 && t / scale >= min_cols)
+        .unwrap_or(scale * min_cols)
 }
 
 fn fmt_rate(r: Option<f64>) -> String {
@@ -123,7 +150,7 @@ fn header(c: &mut Canvas, app: &App, wall: SystemTime) {
     if !host.is_empty() {
         x = c.put(x, 0, &format!("  {host}"), st::CYAN);
     }
-    x = c.put(x, 0, &format!("  {}", app.target), 0);
+    x = c.put(x, 0, &format!("  {}", tail(&app.target, c.w / 3)), 0);
     let clock = fmt_utc(wall);
     let room = c.w.saturating_sub(x + clock.len() + 4);
     let status: String = app.status.chars().take(room).collect();
@@ -341,7 +368,7 @@ fn timeline(c: &mut Canvas, app: &App, now: Instant, y: usize, w: usize, h: usiz
     let ay = y + rows + 1;
     c.put(x0 + ncol - 3, ay, "now", st::DIM);
     let mut right_limit = x0 + ncol - 4;
-    let step = 12;
+    let step = (tick_interval(scale, 10) / scale) as usize;
     let mut j = step;
     while j < ncol {
         let label = format!("-{}", fmt_age(j as u64 * scale));
@@ -618,6 +645,29 @@ mod tests {
         assert!(s.contains("Messages   240"), "{s}");
         // 240 messages in 60 s -> 4.00/s over the last minute
         assert!(s.contains("Rate 1m    4.00/s"), "{s}");
+        // a long target never runs into the clock
+        let mut b = sample_app(t);
+        b.target = "x".repeat(300);
+        let s = render(&b, t, SystemTime::UNIX_EPOCH, 80, 24).text();
+        assert!(
+            s.lines().next().unwrap().ends_with("1970-01-01 00:00:00Z"),
+            "{s}"
+        );
+    }
+
+    #[test]
+    fn axis_labels() {
+        assert_eq!(fmt_age(90), "1m30s");
+        assert_eq!(fmt_age(3600), "1h");
+        assert_eq!(fmt_age(86400 + 1800), "1d30m");
+        assert_eq!(fmt_age(0), "0s");
+        assert_eq!(tail("abcdef", 6), "abcdef");
+        assert_eq!(tail("replay:/very/long/path.nmea", 12), "...path.nmea");
+        assert_eq!(tick_interval(1, 10), 10);
+        assert_eq!(tick_interval(10, 10), 120);
+        assert_eq!(tick_interval(60, 10), 600);
+        assert_eq!(tick_interval(600, 10), 7200);
+        assert_eq!(tick_interval(3600, 10), 43200);
     }
 
     #[test]
