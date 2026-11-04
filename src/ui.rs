@@ -236,7 +236,12 @@ fn header(c: &mut Canvas, app: &App, wall: SystemTime) {
     let clock = fmt_utc(wall);
     // two spaces before the status, at least one before the clock
     let room = c.w.saturating_sub(x + 2 + clock.len() + 1);
-    let status = head(&app.status, room);
+    // Fewer than four cells could only show a fragment of "...".
+    let status = if room >= 4 {
+        head(&app.status, room)
+    } else {
+        String::new()
+    };
     let style = if app.connected { st::GREEN } else { st::YELLOW };
     c.put(x + 2, 0, &status, style);
     c.put(c.w - clock.len(), 0, &clock, 0);
@@ -792,6 +797,18 @@ mod tests {
         assert!(s.contains("Rate 1m    4.00/s"), "{s}");
         // a long target never runs into the clock
         let mut b = sample_app(t);
+        // a target that leaves less than four cells shows no status at all
+        let mut d = sample_app(t);
+        d.target = "udp://[ff15::a15:2]:60003".into();
+        d.host = "lxc-ubuntu-05".into();
+        d.status = "listening udp://[ff15::a15:2]:60003".into();
+        let s = render(&d, t, SystemTime::UNIX_EPOCH, 80, 24).text();
+        let first = s.lines().next().unwrap();
+        assert_eq!(
+            first,
+            "aisnomon 0.1.0  lxc-ubuntu-05  udp://[ff15::a15:2]:60003    1970-01-01 00:00:00Z",
+            "{s}"
+        );
         b.target = "x".repeat(300);
         let s = render(&b, t, SystemTime::UNIX_EPOCH, 80, 24).text();
         assert!(
