@@ -6,5 +6,8 @@
 
 
 pub mod nmea;
+pub mod serial;
+pub mod source;
+pub mod target;
 pub mod term;
 pub mod tty;
