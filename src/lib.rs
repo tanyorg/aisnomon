@@ -5,6 +5,7 @@
 //! from gnomon (https://github.com/tanyorg/gnomon).
 
 
+pub mod ais;
 pub mod nmea;
 pub mod serial;
 pub mod source;
