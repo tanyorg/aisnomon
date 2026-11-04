@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # Mock AIS receiver output (!AIVDM sentences) for testing aisnomon.
 #   mockais.py [options] tcp PORT        TCP server, every client gets the stream
-#   mockais.py [options] udp HOST:PORT   send datagrams (unicast or multicast)
+#   mockais.py [options] udp HOST:PORT   send datagrams (unicast or multicast,
+#                                        IPv4 or [IPv6]:PORT)
 #   mockais.py [options] pty             pseudo-terminal; prints the slave path
 #   mockais.py [options] stdout          write to stdout (e.g. a capture file)
 #
@@ -18,6 +19,9 @@ ap.add_argument("--ck-errors", type=float, default=0.0, help="probability of a b
 ap.add_argument("--drop-frag", type=float, default=0.0, help="probability of losing a fragment")
 ap.add_argument("--noise", type=float, default=0.0, help="probability of a garbage line per message")
 ap.add_argument("--tag", action="store_true", help="prefix tag blocks (s:, c:)")
+ap.add_argument("--udpbc", action="store_true",
+                help="udp only: IEC 61162-450 style datagrams, one sentence each, "
+                     "with a UdPbC header and an s:/n: tag block")
 ap.add_argument("--own", action="store_true", help="also emit own-ship !AIVDO every 10 s")
 ap.add_argument("--fade", type=float, default=0.0,
                 help="seconds per cycle in which channel B fades out and back (0 = off)")
@@ -26,6 +30,8 @@ ap.add_argument("--seed", type=int, default=None)
 ap.add_argument("mode", choices=["tcp", "udp", "pty", "stdout"])
 ap.add_argument("where", nargs="?", default="")
 a = ap.parse_args()
+if a.udpbc and a.mode != "udp":
+    ap.error("--udpbc only applies to udp")
 rng = random.Random(a.seed)
 
 
@@ -54,11 +60,12 @@ def checksum(body):
 
 
 seq = 0
+line_no = 0
 
 
 def sentences(bits, chan, own=False):
     """Encapsulate a message; long payloads are split at 60 characters."""
-    global seq
+    global seq, line_no
     payload, fill = armor(bits)
     parts = [payload[i:i + 60] for i in range(0, len(payload), 60)]
     sid = ""
@@ -76,8 +83,16 @@ def sentences(bits, chan, own=False):
         if rng.random() < a.drop_frag and len(parts) > 1:
             continue
         line = "!%s*%02X" % (body, ck)
+        fields = []
+        if a.udpbc:
+            line_no = line_no % 999 + 1
+            fields += ["s:AI0001", "n:%d" % line_no]
+        elif a.tag:
+            fields.append("s:mockais")
         if a.tag:
-            tb = "s:mockais,c:%d" % int(sim_now())
+            fields.append("c:%d" % int(sim_now()))
+        if fields:
+            tb = ",".join(fields)
             line = "\\%s*%02X\\%s" % (tb, checksum(tb), line)
         out.append(line)
     if rng.random() < a.noise:
@@ -178,10 +193,16 @@ def run_tcp(port):
 
 def run_udp(where):
     host, _, port = where.rpartition(":")
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 1)
-    dst = (host.strip("[]") or "127.0.0.1", int(port))
-    generate(lambda lines: [s.sendto((l + "\r\n").encode(), dst) for l in lines])
+    host = host.strip("[]") or "127.0.0.1"
+    if ":" in host:
+        s = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+        s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_MULTICAST_HOPS, 1)
+    else:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 1)
+    dst = (host, int(port))
+    head = b"UdPbC\0" if a.udpbc else b""
+    generate(lambda lines: [s.sendto(head + (l + "\r\n").encode(), dst) for l in lines])
 
 
 def run_pty():
