@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # Mock AIS receiver output (!AIVDM sentences) for testing aisnomon.
 #   mockais.py [options] tcp PORT        TCP server, every client gets the stream
-#   mockais.py [options] udp HOST:PORT   send datagrams (unicast or multicast,
-#                                        IPv4 or [IPv6]:PORT)
+#   mockais.py [options] udp HOST:PORT   send unicast datagrams (IPv4, or
+#                                        [IPv6]:PORT); multicast is refused
 #   mockais.py [options] pty             pseudo-terminal; prints the slave path
 #   mockais.py [options] stdout          write to stdout (e.g. a capture file)
 #
 # Traffic: class A vessels (type 1/3, type 5 in two parts), class B vessels
 # (type 18, type 24 A/B), one base station (type 4) and AtoNs (type 21),
 # alternating between channels A and B. Faults can be injected.
-import argparse, heapq, os, random, socket, sys, threading, time
+import argparse, heapq, ipaddress, os, random, socket, sys, threading, time
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--vessels", type=int, default=30, help="number of vessels (default 30)")
@@ -194,13 +194,15 @@ def run_tcp(port):
 def run_udp(where):
     host, _, port = where.rpartition(":")
     host = host.strip("[]") or "127.0.0.1"
-    if ":" in host:
-        s = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
-        s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_MULTICAST_HOPS, 1)
-    else:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 1)
-    dst = (host, int(port))
+    try:
+        family, _, _, _, dst = socket.getaddrinfo(host, int(port), type=socket.SOCK_DGRAM)[0]
+    except (socket.gaierror, ValueError) as e:
+        ap.error("udp %s: %s" % (where, e))
+    # Multicast is refused on purpose: a forgotten mock sender floods every
+    # listener of the group on the segment with fake AIS traffic.
+    if ipaddress.ip_address(dst[0].split("%")[0]).is_multicast:
+        ap.error("udp %s: multicast destinations are not supported" % where)
+    s = socket.socket(family, socket.SOCK_DGRAM)
     head = b"UdPbC\0" if a.udpbc else b""
     generate(lambda lines: [s.sendto(head + (l + "\r\n").encode(), dst) for l in lines])
 
