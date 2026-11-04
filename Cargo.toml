@@ -1,0 +1,26 @@
+[package]
+name = "aisnomon"
+version = "0.1.0"
+edition = "2021"
+description = "Real-time AIS and NMEA 0183 reception monitor: message rate, channel A/B balance, fragment reassembly, checksum and decode errors, per-MMSI statistics (serial, TCP, UDP)"
+authors = ["tany <tany@tany.org>"]
+license = "BSD-2-Clause"
+rust-version = "1.80"
+repository = "https://github.com/tanyorg/aisnomon"
+readme = "README.md"
+keywords = ["ais", "nmea", "aivdm", "marine", "monitor"]
+categories = ["command-line-utilities", "hardware-support"]
+exclude = ["/tools", "/.gitignore", "/*.png"]
+
+# Intentionally dependency-free (std only), like gnomon.
+
+[[bin]]
+name = "aisnomon"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "unwind"
