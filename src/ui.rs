@@ -178,16 +178,22 @@ fn footer(c: &mut Canvas, app: &App, y: usize) {
     c.put(x, y, keys, st::DIM);
 }
 
-fn field(c: &mut Canvas, x: usize, y: usize, label: &str, value: &str, style: u8) {
+/// Label width per SUMMARY column: the longest label plus one space. The
+/// middle column is narrower so that "count percent" never touches the
+/// third column's labels at 80 columns.
+const LABEL_W: [usize; 3] = [11, 9, 11];
+
+fn field(c: &mut Canvas, col: (usize, usize), y: usize, label: &str, value: &str, style: u8) {
+    let (x, i) = col;
     c.put(x, y, label, st::DIM);
-    c.put(x + 11, y, value, style);
+    c.put(x + LABEL_W[i], y, value, style);
 }
 
 fn summary(c: &mut Canvas, app: &App, now: Instant, y: usize, w: usize) {
     c.boxed(0, y, w, SUMMARY_H, "SUMMARY");
     let k = &app.c;
     let cw = (w - 4) / 3;
-    let (x1, x2, x3) = (2, 2 + cw, 2 + 2 * cw);
+    let (x1, x2, x3) = ((2, 0), (2 + cw, 1), (2 + 2 * cw, 2));
     let y = y + 1;
 
     field(c, x1, y, "Messages", &k.messages.to_string(), st::BOLD);
@@ -226,7 +232,7 @@ fn summary(c: &mut Canvas, app: &App, now: Instant, y: usize, w: usize) {
     );
 
     let total = k.messages;
-    let chan = |n: u64| format!("{n:<8} {}", pct(n, total));
+    let chan = |n: u64| format!("{n:<7} {}", pct(n, total));
     field(c, x2, y, "AIS A", &chan(k.chan[0]), 0);
     field(c, x2, y + 1, "AIS B", &chan(k.chan[1]), 0);
     field(
@@ -259,7 +265,7 @@ fn summary(c: &mut Canvas, app: &App, now: Instant, y: usize, w: usize) {
         x3,
         y,
         "Valid",
-        &format!("{:<8} {}", k.valid, pct(k.valid, snt)),
+        &format!("{:<7} {}", k.valid, pct(k.valid, snt)),
         0,
     );
     field(
@@ -268,7 +274,7 @@ fn summary(c: &mut Canvas, app: &App, now: Instant, y: usize, w: usize) {
         y + 1,
         "CK error",
         &format!(
-            "{:<8} {}",
+            "{:<7} {}",
             k.ck_bad + k.ck_missing,
             pct(k.ck_bad + k.ck_missing, snt)
         ),
@@ -653,6 +659,23 @@ mod tests {
             s.lines().next().unwrap().ends_with("1970-01-01 00:00:00Z"),
             "{s}"
         );
+    }
+
+    #[test]
+    fn summary_columns_do_not_touch() {
+        let t = Instant::now();
+        let mut a = sample_app(t);
+        a.c.messages = 9_999_999;
+        a.c.chan = [9_999_999, 0, 0];
+        a.c.valid = 9_999_999;
+        let s = render(&a, t, SystemTime::now(), 80, 24).text();
+        let cw = (80 - 4) / 3;
+        for row in s.lines().skip(2).take(5) {
+            let b: Vec<char> = row.chars().collect();
+            assert_eq!(b[2 + 2 * cw - 1], ' ', "{row}");
+            assert_eq!(b[2 + cw - 1], ' ', "{row}");
+        }
+        assert!(s.contains("AIS A    9999999 100.0%"), "{s}");
     }
 
     #[test]
