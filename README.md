@@ -71,6 +71,14 @@ on the OS default: Linux accepts IPv4-mapped traffic
 (`net.ipv6.bindv6only=0`), FreeBSD does not (`net.inet6.ip6.v6only=1`) and
 OpenBSD never does. Listen on `udp://:PORT` (0.0.0.0) for IPv4 senders.
 
+**Multicast:** a multicast address (IPv4 or IPv6, e.g.
+`udp://[ff15::a15:2]:60003`) is joined on the interface the kernel picks
+for it, normally the one with the default route; an IEC 61162-450
+`UdPbC\0` header is removed. Tested so far with `tools/mockais.py` only:
+IPv4 and IPv6 groups with sender and receiver on one Linux host, IPv4
+`--udpbc` datagrams on one host, and IPv4 from a macOS sender to an Ubuntu
+receiver across a LAN. Not yet tested with IEC 61162-450 equipment.
+
 ### Keys
 
 | Key | Action |
@@ -141,6 +149,8 @@ tools/mockais.py tcp 10110 &                    # then: aisnomon localhost:10110
 tools/mockais.py --speedup 10 --ck-errors 0.02 --drop-frag 0.1 udp 127.0.0.1:10110
 tools/mockais.py --fade 120 pty                 # prints a pty path for aisnomon
 tools/mockais.py --tag --duration 600 stdout > capture.nmea
+tools/mockais.py --udpbc udp 239.192.0.2:60002  # IEC 61162-450 style multicast
+tools/mockais.py udp '[ff15::a15:2]:60003'      # IPv6 multicast
 ```
 
 ## Limitations
