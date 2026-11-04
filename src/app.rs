@@ -548,7 +548,7 @@ impl App {
             }
         };
         let mark = if v.own { "own " } else { "" };
-        raw.note = format!("{mark}T{} {}", h.mtype, h.mmsi);
+        raw.note = format!("{mark}T{} {:09}", h.mtype, h.mmsi);
         raw.style = if v.own { st::CYAN } else { 0 };
         match h.len {
             LenCheck::Ok => {}
@@ -649,6 +649,9 @@ mod tests {
         );
         assert_eq!(a.raw[5].frag, "1/2");
         assert_eq!(a.raw[0].chan, 'B');
+        // MMSIs keep their leading zeros: 00MIDxxxx is a coast station
+        a.line(ts, "!AIVDM,1,1,,B,D0476ch0@Bfp?`B`?`0,4*5D".into(), t);
+        assert_eq!(a.raw.back().unwrap().note, "T20 004310703");
     }
 
     #[test]
