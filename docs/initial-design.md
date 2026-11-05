@@ -1,5 +1,7 @@
 # Aisnomon — Project Concept & Initial Design
 
+> Note: this is the initial concept memo, kept for reference. Parts of it differ from the current implementation; see README.md and docs/aisnomon.md.
+
 - Project name: **Aisnomon**
 - Repository: `aisnomon`
 - Category: AIS / NMEA 0183 Reception Monitor
