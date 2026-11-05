@@ -29,13 +29,21 @@ writes to a receiver.
 
 ## Install
 
-From source (not on crates.io yet):
+From crates.io:
+
+```sh
+cargo install aisnomon
+```
+
+Or from source:
 
 ```sh
 git clone https://github.com/tanyorg/aisnomon
 cd aisnomon
 cargo install --path .
 ```
+
+Either way the binary goes to `~/.cargo/bin`, which must be in `PATH`.
 
 Requires Rust 1.80 or later (built and tested with 1.80.1 and 1.99.1).
 Tested on Linux and macOS (unit tests, and serial input through a pty; the
