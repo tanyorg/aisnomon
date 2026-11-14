@@ -190,8 +190,7 @@ pub fn spawn(path: String, speed: Option<u32>, log: Option<File>, tx: Sender<Ev>
         let mut log = log;
         let mut last_good = speed;
         retry_loop(&tx.clone(), |got| {
-            session(&path, speed, &mut last_good, &mut log, &tx, got)
-                .map_err(|e| format!("{path}: {e}"))
+            session(&path, speed, &mut last_good, &mut log, &tx, got).map_err(|e| e.to_string())
         });
     });
 }
@@ -204,7 +203,7 @@ fn session(
     tx: &Sender<Ev>,
     got_data: &mut bool,
 ) -> io::Result<String> {
-    let _ = tx.send(Ev::Status(format!("opening {path}")));
+    let _ = tx.send(Ev::Status("opening".into()));
     let mut f = open_dev(path)?;
     tty::set_exclusive(f.as_raw_fd(), true);
     // CLOCAL first, then blocking reads.
@@ -223,7 +222,7 @@ fn session(
             order.extend(AUTOBAUD.iter().copied().filter(|s| Some(*s) != *last_good));
             let mut found = None;
             for s in order {
-                let _ = tx.send(Ev::Status(format!("{path}: probing {s} bps")));
+                let _ = tx.send(Ev::Status(format!("probing {s} bps")));
                 // Probe lines are dropped: they were buffered while probing,
                 // so their arrival times are useless for timing statistics.
                 if probe(&mut f, s)? {
@@ -249,9 +248,9 @@ fn session(
     };
     let cdc = is_usb_cdc(path);
     let desc = if cdc {
-        format!("{path} USB CDC{dcd}{note}")
+        format!("USB CDC{dcd}{note}")
     } else {
-        format!("{path} {speed} 8N1{dcd}{note}")
+        format!("{speed} 8N1{dcd}{note}")
     };
     let _ = tx.send(Ev::Connected(desc, Kind::Serial { speed, cdc }));
     *got_data = true;

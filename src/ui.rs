@@ -801,7 +801,7 @@ mod tests {
         let mut d = sample_app(t);
         d.target = "udp://[ff15::a15:2]:60003".into();
         d.host = "lxc-ubuntu-05".into();
-        d.status = "listening udp://[ff15::a15:2]:60003".into();
+        d.status = "listening".into();
         let s = render(&d, t, SystemTime::UNIX_EPOCH, 80, 24).text();
         let first = s.lines().next().unwrap();
         assert_eq!(

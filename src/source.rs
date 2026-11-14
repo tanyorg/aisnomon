@@ -144,12 +144,7 @@ fn tcp_session(
     tx: &Sender<Ev>,
     got_data: &mut bool,
 ) -> std::io::Result<String> {
-    let label = crate::target::Target::Tcp {
-        host: host.to_string(),
-        port,
-    }
-    .display();
-    let _ = tx.send(Ev::Status(format!("connecting to {label}")));
+    let _ = tx.send(Ev::Status("connecting".into()));
     let mut sock = connect(host, port)?;
     sock.set_read_timeout(Some(Duration::from_millis(500)))?;
     let peer = sock.peer_addr().map(|a| a.to_string()).unwrap_or_default();
@@ -202,11 +197,12 @@ pub fn datagram_lines(mut data: &[u8]) -> Vec<String> {
 }
 
 /// Status once bound: "joined" for a multicast group, else "listening".
-fn udp_status(addr: IpAddr, label: &str) -> String {
+/// The address itself is already in the header.
+fn udp_status(addr: IpAddr) -> &'static str {
     if addr.is_multicast() {
-        format!("joined {label}")
+        "joined"
     } else {
-        format!("listening {label}")
+        "listening"
     }
 }
 
@@ -244,10 +240,8 @@ fn udp_session(
     tx: &Sender<Ev>,
     got_data: &mut bool,
 ) -> std::io::Result<String> {
-    let label = crate::target::Target::Udp { addr, port }.display();
-    let sock =
-        udp_bind(addr, port).map_err(|e| std::io::Error::new(e.kind(), format!("{label}: {e}")))?;
-    let _ = tx.send(Ev::Connected(udp_status(addr, &label), Kind::Udp));
+    let sock = udp_bind(addr, port)?;
+    let _ = tx.send(Ev::Connected(udp_status(addr).into(), Kind::Udp));
     let mut peers: HashSet<SocketAddr> = HashSet::new();
     let mut buf = vec![0u8; 65536];
     loop {
@@ -301,13 +295,13 @@ pub fn spawn_replay(path: String, tx: Sender<Ev>) {
             match File::open(&path) {
                 Ok(f) => Box::new(BufReader::new(f)),
                 Err(e) => {
-                    let _ = tx.send(Ev::Disconnected(format!("{path}: {e}")));
+                    let _ = tx.send(Ev::Disconnected(e.to_string()));
                     return;
                 }
             }
         };
         let paced = path != "-";
-        let _ = tx.send(Ev::Connected(format!("replay {path}"), Kind::Replay));
+        let _ = tx.send(Ev::Connected("replaying".into(), Kind::Replay));
         let mut prev: Option<f64> = None;
         for line in reader.split(b'\n') {
             let Ok(mut l) = line else { break };
@@ -371,9 +365,9 @@ mod tests {
         let v4: IpAddr = "239.192.0.2".parse().unwrap();
         let v6: IpAddr = "ff15::a15:2".parse().unwrap();
         let uni: IpAddr = "0.0.0.0".parse().unwrap();
-        assert_eq!(udp_status(v4, "udp://x"), "joined udp://x");
-        assert_eq!(udp_status(v6, "udp://x"), "joined udp://x");
-        assert_eq!(udp_status(uni, "udp://x"), "listening udp://x");
+        assert_eq!(udp_status(v4), "joined");
+        assert_eq!(udp_status(v6), "joined");
+        assert_eq!(udp_status(uni), "listening");
     }
 
     #[test]
