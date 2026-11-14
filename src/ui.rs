@@ -229,7 +229,8 @@ pub fn page_rows(app: &App, h: usize) -> usize {
     }
 }
 
-/// Status cells the header keeps free before it shortens the target.
+/// Status cells the header keeps free before it shortens the target
+/// below half of the shared room.
 const STATUS_MIN: usize = 24;
 
 fn header(c: &mut Canvas, app: &App, wall: SystemTime) {
@@ -244,11 +245,12 @@ fn header(c: &mut Canvas, app: &App, wall: SystemTime) {
         x = c.put(x, 0, &format!("  {host}"), st::CYAN);
     }
     let clock = fmt_utc(wall);
-    // The target gets what is left after the clock and a useful amount of
-    // status, but never less than a third of the width.
+    // Target and status share what is left after the clock. The target
+    // takes all of it but up to STATUS_MIN cells of status; when that is
+    // too little, they split the room in half.
+    let shared = c.w.saturating_sub(x + 2 + 2 + 1 + clock.len());
     let status_want = app.status.chars().count().min(STATUS_MIN);
-    let reserve = 2 + status_want + 1 + clock.len();
-    let tw = c.w.saturating_sub(x + 2 + reserve).max(c.w / 3);
+    let tw = shared.saturating_sub(status_want).max(shared / 2);
     x = c.put(x, 0, &format!("  {}", mid(&app.target, tw)), 0);
     // two spaces before the status, at least one before the clock
     let room = c.w.saturating_sub(x + 2 + clock.len() + 1);
@@ -813,7 +815,7 @@ mod tests {
         assert!(s.contains("Rate 1m    4.00/s"), "{s}");
         // a long target never runs into the clock
         let mut b = sample_app(t);
-        // a target that leaves less than four cells shows no status at all
+        // when target and status do not both fit, they share the room
         let mut d = sample_app(t);
         d.target = "udp://[ff15::a15:2]:60003".into();
         d.host = "lxc-ubuntu-05".into();
@@ -822,7 +824,7 @@ mod tests {
         let first = s.lines().next().unwrap();
         assert_eq!(
             first,
-            "aisnomon 0.1.0  lxc-ubuntu-05  udp://[ff15::a15:2]:60003    1970-01-01 00:00:00Z",
+            "aisnomon 0.1.0  lxc-ubuntu-05  udp://[...]:60003  listening 1970-01-01 00:00:00Z",
             "{s}"
         );
         b.target = "x".repeat(300);
@@ -846,11 +848,28 @@ mod tests {
             "/dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller-if00-port0"
                 .into();
         a.status = "probing 38400 bps".into();
-        // 80 columns: the path keeps a third of the width, cut in the middle
+        // 80 columns: the path is cut in the middle, the status stays whole
         assert_eq!(
             first(&a, 80),
-            "aisnomon 0.1.0  myhost  /dev/serial/...-if00-port0  prob... 1970-01-01 00:00:00Z"
+            "aisnomon 0.1.0  myhost  /dev/se...-port0  probing 38400 bps 1970-01-01 00:00:00Z"
         );
+        // a short target leaves the rest to the status
+        a.target = "/dev/ttyUSB0".into();
+        a.status = "No such file or directory (os error 2); retry in 2s".into();
+        assert_eq!(
+            first(&a, 80),
+            "aisnomon 0.1.0  myhost  /dev/ttyUSB0  No such file or di... 1970-01-01 00:00:00Z"
+        );
+        // a label too long for both: still no overlap with the clock
+        let mut b = sample_app(t);
+        b.host = "x".repeat(LABEL_MAX);
+        b.target = a.target.clone();
+        b.status = a.status.clone();
+        assert!(first(&b, 80).ends_with(" 1970-01-01 00:00:00Z"));
+        a.target =
+            "/dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller-if00-port0"
+                .into();
+        a.status = "probing 38400 bps".into();
         // wide enough: the whole path, then the whole status
         let s = first(&a, 160);
         assert!(
