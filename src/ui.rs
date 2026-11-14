@@ -54,14 +54,22 @@ fn head(s: &str, n: usize) -> String {
     t
 }
 
-/// The last `n` characters of `s`, with a leading "..." when cut.
-fn tail(s: &str, n: usize) -> String {
+/// At most `n` characters of `s`, cut in the middle with "..." so both
+/// ends stay: the scheme and port of an address, the start and the
+/// interface suffix of a /dev/serial/by-id path.
+fn mid(s: &str, n: usize) -> String {
     let len = s.chars().count();
     if len <= n {
         return s.to_string();
     }
-    let keep = n.saturating_sub(3);
-    format!("...{}", s.chars().skip(len - keep).collect::<String>())
+    if n <= 3 {
+        return "..."[..n].to_string();
+    }
+    let keep = n - 3;
+    let back = keep / 2;
+    let front: String = s.chars().take(keep - back).collect();
+    let end: String = s.chars().skip(len - back).collect();
+    format!("{front}...{end}")
 }
 
 /// `n` in at most `w` (>= 4) characters: plain digits when they fit,
@@ -221,6 +229,9 @@ pub fn page_rows(app: &App, h: usize) -> usize {
     }
 }
 
+/// Status cells the header keeps free before it shortens the target.
+const STATUS_MIN: usize = 24;
+
 fn header(c: &mut Canvas, app: &App, wall: SystemTime) {
     let host = &app.host;
     let mut x = c.put(
@@ -232,8 +243,13 @@ fn header(c: &mut Canvas, app: &App, wall: SystemTime) {
     if !host.is_empty() {
         x = c.put(x, 0, &format!("  {host}"), st::CYAN);
     }
-    x = c.put(x, 0, &format!("  {}", tail(&app.target, c.w / 3)), 0);
     let clock = fmt_utc(wall);
+    // The target gets what is left after the clock and a useful amount of
+    // status, but never less than a third of the width.
+    let status_want = app.status.chars().count().min(STATUS_MIN);
+    let reserve = 2 + status_want + 1 + clock.len();
+    let tw = c.w.saturating_sub(x + 2 + reserve).max(c.w / 3);
+    x = c.put(x, 0, &format!("  {}", mid(&app.target, tw)), 0);
     // two spaces before the status, at least one before the clock
     let room = c.w.saturating_sub(x + 2 + clock.len() + 1);
     // Fewer than four cells could only show a fragment of "...".
@@ -818,6 +834,44 @@ mod tests {
     }
 
     #[test]
+    fn header_target_width() {
+        let t = Instant::now();
+        let first = |a: &App, w| {
+            let s = render(a, t, SystemTime::UNIX_EPOCH, w, 24).text();
+            s.lines().next().unwrap().to_string()
+        };
+        let mut a = sample_app(t);
+        a.host = "myhost".into();
+        a.target =
+            "/dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller-if00-port0"
+                .into();
+        a.status = "probing 38400 bps".into();
+        // 80 columns: the path keeps a third of the width, cut in the middle
+        assert_eq!(
+            first(&a, 80),
+            "aisnomon 0.1.0  myhost  /dev/serial/...-if00-port0  prob... 1970-01-01 00:00:00Z"
+        );
+        // wide enough: the whole path, then the whole status
+        let s = first(&a, 160);
+        assert!(
+            s.starts_with(&format!(
+                "aisnomon 0.1.0  myhost  {}  probing 38400 bps ",
+                a.target
+            )),
+            "{s}"
+        );
+        // a long status does not take room from a target that fits
+        a.target = "tcp://ais-receiver.example.net:10110".into();
+        a.status = "failed to lookup address information: Name or service not known".into();
+        let s = first(&a, 132);
+        assert!(
+            s.starts_with("aisnomon 0.1.0  myhost  tcp://ais-receiver.example.net:10110  failed"),
+            "{s}"
+        );
+        assert!(s.ends_with("... 1970-01-01 00:00:00Z"), "{s}");
+    }
+
+    #[test]
     fn summary_columns_do_not_touch() {
         let t = Instant::now();
         let mut a = sample_app(t);
@@ -1000,7 +1054,13 @@ mod tests {
         assert_eq!(fmt_age(3600), "1h");
         assert_eq!(fmt_age(86400 + 1800), "1d30m");
         assert_eq!(fmt_age(0), "0s");
-        assert_eq!(tail("abcdef", 6), "abcdef");
+        assert_eq!(mid("abcdef", 6), "abcdef");
+        assert_eq!(mid("abcdefgh", 7), "ab...gh");
+        assert_eq!(mid("abcdefgh", 6), "ab...h");
+        assert_eq!(
+            (mid("abcdef", 3), mid("abcdef", 0)),
+            ("...".into(), String::new())
+        );
         assert_eq!(
             head("connected 127.0.0.1:10110", 25),
             "connected 127.0.0.1:10110"
@@ -1010,7 +1070,7 @@ mod tests {
             (head("abcdef", 2), head("abcdef", 0)),
             ("..".into(), String::new())
         );
-        assert_eq!(tail("replay:/very/long/path.nmea", 12), "...path.nmea");
+        assert_eq!(mid("replay:/very/long/path.nmea", 13), "repla....nmea");
         assert_eq!(tick_interval(1, 10), 10);
         assert_eq!(tick_interval(10, 10), 120);
         assert_eq!(tick_interval(60, 10), 600);
