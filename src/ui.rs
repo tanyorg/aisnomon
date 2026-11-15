@@ -229,18 +229,21 @@ pub fn page_rows(app: &App, h: usize) -> usize {
     }
 }
 
+/// Version shown in the header; fixed under test so expected layouts do
+/// not change with every release.
+const VERSION: &str = if cfg!(test) {
+    "0.0.0"
+} else {
+    env!("CARGO_PKG_VERSION")
+};
+
 /// Status cells the header keeps free before it shortens the target
 /// below half of the shared room.
 const STATUS_MIN: usize = 24;
 
 fn header(c: &mut Canvas, app: &App, wall: SystemTime) {
     let host = &app.host;
-    let mut x = c.put(
-        0,
-        0,
-        &format!("aisnomon {}", env!("CARGO_PKG_VERSION")),
-        st::BOLD,
-    );
+    let mut x = c.put(0, 0, &format!("aisnomon {VERSION}"), st::BOLD);
     if !host.is_empty() {
         x = c.put(x, 0, &format!("  {host}"), st::CYAN);
     }
@@ -824,7 +827,7 @@ mod tests {
         let first = s.lines().next().unwrap();
         assert_eq!(
             first,
-            "aisnomon 0.1.1  rx.example.net  udp://[...:60003  listening 1970-01-01 00:00:00Z",
+            "aisnomon 0.0.0  rx.example.net  udp://[...:60003  listening 1970-01-01 00:00:00Z",
             "{s}"
         );
         b.target = "x".repeat(300);
@@ -851,14 +854,14 @@ mod tests {
         // 80 columns: the path is cut in the middle, the status stays whole
         assert_eq!(
             first(&a, 80),
-            "aisnomon 0.1.1  myhost  /dev/se...-port0  probing 38400 bps 1970-01-01 00:00:00Z"
+            "aisnomon 0.0.0  myhost  /dev/se...-port0  probing 38400 bps 1970-01-01 00:00:00Z"
         );
         // a short target leaves the rest to the status
         a.target = "/dev/ttyUSB0".into();
         a.status = "No such file or directory (os error 2); retry in 2s".into();
         assert_eq!(
             first(&a, 80),
-            "aisnomon 0.1.1  myhost  /dev/ttyUSB0  No such file or di... 1970-01-01 00:00:00Z"
+            "aisnomon 0.0.0  myhost  /dev/ttyUSB0  No such file or di... 1970-01-01 00:00:00Z"
         );
         // a label too long for both: still no overlap with the clock
         let mut b = sample_app(t);
@@ -874,7 +877,7 @@ mod tests {
         let s = first(&a, 160);
         assert!(
             s.starts_with(&format!(
-                "aisnomon 0.1.1  myhost  {}  probing 38400 bps ",
+                "aisnomon 0.0.0  myhost  {}  probing 38400 bps ",
                 a.target
             )),
             "{s}"
@@ -884,7 +887,7 @@ mod tests {
         a.status = "failed to lookup address information: Name or service not known".into();
         let s = first(&a, 132);
         assert!(
-            s.starts_with("aisnomon 0.1.1  myhost  tcp://ais-receiver.example.net:10110  failed"),
+            s.starts_with("aisnomon 0.0.0  myhost  tcp://ais-receiver.example.net:10110  failed"),
             "{s}"
         );
         assert!(s.ends_with("... 1970-01-01 00:00:00Z"), "{s}");
@@ -1053,12 +1056,12 @@ mod tests {
         a.host = parse_label("myhost").unwrap();
         let s = render(&a, t, SystemTime::now(), 80, 24).text();
         assert!(
-            s.starts_with("aisnomon 0.1.1  myhost  tcp://rx:10110"),
+            s.starts_with("aisnomon 0.0.0  myhost  tcp://rx:10110"),
             "{s}"
         );
         a.host = parse_label("").unwrap();
         let s = render(&a, t, SystemTime::now(), 80, 24).text();
-        assert!(s.starts_with("aisnomon 0.1.1  tcp://rx:10110"), "{s}");
+        assert!(s.starts_with("aisnomon 0.0.0  tcp://rx:10110"), "{s}");
         assert_eq!(parse_label("tokyo bay rx-1").unwrap(), "tokyo bay rx-1");
         assert!(parse_label(&"x".repeat(LABEL_MAX)).is_ok());
         assert!(parse_label(&"x".repeat(LABEL_MAX + 1)).is_err());
