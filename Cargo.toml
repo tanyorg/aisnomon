@@ -1,6 +1,6 @@
 [package]
 name = "aisnomon"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "Real-time AIS and NMEA 0183 reception monitor: message rate, channel A/B balance, fragment reassembly, checksum and decode errors, per-MMSI statistics (serial, TCP, UDP)"
 authors = ["Fuminori -Tany- Tanizaki <tany@tany.org>"]
