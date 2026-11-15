@@ -363,7 +363,7 @@ mod tests {
     #[test]
     fn udp_status_joined_or_listening() {
         let v4: IpAddr = "239.192.0.2".parse().unwrap();
-        let v6: IpAddr = "ff15::a15:2".parse().unwrap();
+        let v6: IpAddr = "ff05::db8:0:2".parse().unwrap();
         let uni: IpAddr = "0.0.0.0".parse().unwrap();
         assert_eq!(udp_status(v4), "joined");
         assert_eq!(udp_status(v6), "joined");

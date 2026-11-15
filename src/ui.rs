@@ -820,7 +820,7 @@ mod tests {
         let mut b = sample_app(t);
         // when target and status do not both fit, they share the room
         let mut d = sample_app(t);
-        d.target = "udp://[ff15::a15:2]:60003".into();
+        d.target = "udp://[ff05::db8:0:2]:60003".into();
         d.host = "rx.example.net".into();
         d.status = "listening".into();
         let s = render(&d, t, SystemTime::UNIX_EPOCH, 80, 24).text();

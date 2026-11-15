@@ -81,7 +81,7 @@ OpenBSD never does. Listen on `udp://:PORT` (0.0.0.0) for IPv4 senders.
 
 **Multicast (experimental):** multicast reception is an experimental
 feature. A multicast address (IPv4 or IPv6, e.g.
-`udp://[ff15::a15:2]:60003`) is joined on the interface the kernel picks
+`udp://[ff05::db8:0:2]:60003`) is joined on the interface the kernel picks
 for it, normally the one with the default route, and an IEC 61162-450
 `UdPbC\0` header is removed. So far it has been tried only with a simulated
 sender: IPv4 and IPv6 groups on one Linux host, IEC 61162-450 style
