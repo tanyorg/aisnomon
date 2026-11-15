@@ -818,13 +818,13 @@ mod tests {
         // when target and status do not both fit, they share the room
         let mut d = sample_app(t);
         d.target = "udp://[ff15::a15:2]:60003".into();
-        d.host = "lxc-ubuntu-05".into();
+        d.host = "rx.example.net".into();
         d.status = "listening".into();
         let s = render(&d, t, SystemTime::UNIX_EPOCH, 80, 24).text();
         let first = s.lines().next().unwrap();
         assert_eq!(
             first,
-            "aisnomon 0.1.1  lxc-ubuntu-05  udp://[...]:60003  listening 1970-01-01 00:00:00Z",
+            "aisnomon 0.1.1  rx.example.net  udp://[...:60003  listening 1970-01-01 00:00:00Z",
             "{s}"
         );
         b.target = "x".repeat(300);
